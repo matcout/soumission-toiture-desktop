@@ -1,191 +1,32 @@
-// src/firebaseFunctions.js - Fonctions Firebase pour Desktop
+// firebaseFunctions.js - Desktop Version
 import { 
   collection, 
+  addDoc, 
   getDocs, 
   doc, 
   updateDoc, 
   deleteDoc, 
-  serverTimestamp,
-  query,
-  orderBy,
-  where,
-  onSnapshot
+  serverTimestamp, 
+  setDoc, 
+  onSnapshot, 
+  query, 
+  orderBy
 } from 'firebase/firestore';
 import { db } from './firebase';
 
-// 📋 Récupérer toutes les soumissions
-export const getAllSubmissions = async () => {
-  try {
-    console.log('📋 Récupération des soumissions...');
-    
-    const q = query(
-      collection(db, 'soumissions'), 
-      orderBy('createdAt', 'desc')
-    );
-    
-    const querySnapshot = await getDocs(q);
-    const submissions = [];
-    
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      submissions.push({
-        id: doc.id,
-        ...data,
-        // Convertir timestamps en dates lisibles
-        createdAt: data.createdAt?.toDate() || new Date(),
-        updatedAt: data.updatedAt?.toDate() || new Date()
-      });
-    });
-
-    console.log(`✅ ${submissions.length} soumissions récupérées`);
-    return {
-      success: true,
-      data: submissions,
-      count: submissions.length
-    };
-
-  } catch (error) {
-    console.error('❌ Erreur récupération:', error);
-    return {
-      success: false,
-      error: error.message,
-      data: []
-    };
-  }
-};
-
-// 📊 Récupérer soumissions avec statut
-export const getSubmissionsByStatus = async (status = 'captured') => {
-  try {
-    const q = query(
-      collection(db, 'soumissions'),
-      where('status', '==', status),
-      orderBy('createdAt', 'desc')
-    );
-    
-    const querySnapshot = await getDocs(q);
-    const submissions = [];
-    
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      submissions.push({
-        id: doc.id,
-        ...data,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        updatedAt: data.updatedAt?.toDate() || new Date()
-      });
-    });
-
-    return { success: true, data: submissions };
-  } catch (error) {
-    console.error('❌ Erreur récupération par statut:', error);
-    return { success: false, data: [] };
-  }
-};
-
-// 🔄 Mettre à jour une soumission (marquer comme traitée)
-export const updateSubmissionStatus = async (submissionId, status, calculations = null) => {
-  try {
-    console.log('🔄 Mise à jour statut:', submissionId, status);
-    
-    const updateData = {
-      status: status,
-      updatedAt: serverTimestamp(),
-      processedAt: status === 'completed' ? serverTimestamp() : null
-    };
-    
-    // Ajouter les calculs si fournis
-    if (calculations) {
-      updateData.calculs = calculations;
-      updateData.calculatedAt = serverTimestamp();
-    }
-    
-    const submissionRef = doc(db, 'soumissions', submissionId);
-    await updateDoc(submissionRef, updateData);
-
-    console.log('✅ Statut mis à jour');
-    return { success: true };
-
-  } catch (error) {
-    console.error('❌ Erreur mise à jour statut:', error);
-    return { success: false, error: error.message };
-  }
-};
-
-// 📈 Statistiques des soumissions
-export const getSubmissionStats = async () => {
-  try {
-    const result = await getAllSubmissions();
-    
-    if (result.success) {
-      const submissions = result.data;
-      
-      const stats = {
-        total: submissions.length,
-        pending: submissions.filter(s => s.status === 'captured').length,
-        completed: submissions.filter(s => s.status === 'completed').length,
-        totalSuperficie: submissions.reduce((sum, sub) => {
-          return sum + (sub.toiture?.superficie?.totale || 0);
-        }, 0).toFixed(2),
-        totalPhotos: submissions.reduce((sum, sub) => {
-          return sum + (sub.photoCount || 0);
-        }, 0),
-        lastWeek: submissions.filter(sub => {
-          const date = sub.createdAt;
-          const weekAgo = new Date();
-          weekAgo.setDate(weekAgo.getDate() - 7);
-          return date > weekAgo;
-        }).length
-      };
-
-      return { success: true, data: stats };
-    }
-
-    return { success: false, data: null };
-
-  } catch (error) {
-    console.error('❌ Erreur stats:', error);
-    return { success: false, data: null };
-  }
-};
-
-// 🔍 Recherche dans les soumissions
-export const searchSubmissions = async (searchTerm) => {
-  try {
-    const result = await getAllSubmissions();
-    
-    if (result.success) {
-      const filtered = result.data.filter(submission => {
-        const searchLower = searchTerm.toLowerCase();
-        return (
-          submission.client?.nom?.toLowerCase().includes(searchLower) ||
-          submission.client?.adresse?.toLowerCase().includes(searchLower) ||
-          submission.client?.telephone?.includes(searchTerm) ||
-          submission.displayName?.toLowerCase().includes(searchLower)
-        );
-      });
-
-      return { success: true, data: filtered, count: filtered.length };
-    }
-
-    return { success: false, data: [], count: 0 };
-
-  } catch (error) {
-    console.error('❌ Erreur recherche:', error);
-    return { success: false, data: [], count: 0 };
-  }
-};
-
-// 🔴 Écouter les changements en temps réel (optionnel)
+// Écouter les soumissions en temps réel
 export const subscribeToSubmissions = (callback) => {
   try {
+    console.log('🔄 Abonnement aux soumissions...');
+    
     const q = query(
-      collection(db, 'soumissions'), 
+      collection(db, 'soumissions'),
       orderBy('createdAt', 'desc')
     );
     
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const submissions = [];
+      
       querySnapshot.forEach((doc) => {
         const data = doc.data();
         submissions.push({
@@ -196,13 +37,120 @@ export const subscribeToSubmissions = (callback) => {
         });
       });
       
-      callback({ success: true, data: submissions });
+      console.log(`✅ ${submissions.length} soumissions synchronisées`);
+      callback({
+        success: true,
+        data: submissions,
+        count: submissions.length
+      });
+    }, (error) => {
+      console.error('❌ Erreur sync soumissions:', error);
+      callback({
+        success: false,
+        error: error.message,
+        data: []
+      });
     });
     
     return unsubscribe;
+    
   } catch (error) {
-    console.error('❌ Erreur subscription:', error);
-    callback({ success: false, data: [] });
+    console.error('❌ Erreur abonnement:', error);
     return null;
   }
+};
+
+// Créer un assignment
+export const createAssignment = async (assignmentData) => {
+  try {
+    console.log('📝 Création assignment...');
+    
+    const addressClean = assignmentData.client?.adresse
+      ?.toLowerCase()
+      .replace(/[^a-zA-Z0-9\s]/g, '')
+      .replace(/\s+/g, '_')
+      .substring(0, 30) || 'assignment';
+    
+    const customId = `assignment_${addressClean}_${Date.now()}`;
+    
+    const dataToSave = {
+      ...assignmentData,
+      status: 'assignment',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      platform: 'desktop',
+      displayName: assignmentData.client?.adresse
+    };
+
+    const docRef = doc(db, 'soumissions', customId);
+    await setDoc(docRef, dataToSave);
+    
+    console.log('✅ Assignment créé:', customId);
+    return {
+      success: true,
+      id: customId,
+      displayName: assignmentData.client?.adresse
+    };
+
+  } catch (error) {
+    console.error('❌ Erreur création assignment:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+// Mettre à jour le statut d'une soumission
+export const updateSubmissionStatus = async (submissionId, newStatus, additionalData = {}) => {
+  try {
+    console.log('📝 Mise à jour soumission:', submissionId);
+    
+    const updateData = {
+      updatedAt: serverTimestamp(),
+      lastModifiedBy: 'desktop',
+      ...additionalData
+    };
+    
+    if (newStatus) {
+      updateData.status = newStatus;
+    }
+
+    const submissionRef = doc(db, 'soumissions', submissionId);
+    await updateDoc(submissionRef, updateData);
+
+    console.log('✅ Soumission mise à jour');
+    return { success: true };
+
+  } catch (error) {
+    console.error('❌ Erreur mise à jour:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+// Supprimer une soumission
+export const deleteSubmissionFromFirebase = async (submissionId) => {
+  try {
+    console.log('🗑️ Suppression soumission:', submissionId);
+    
+    const docRef = doc(db, 'soumissions', submissionId);
+    await deleteDoc(docRef);
+    
+    console.log('✅ Soumission supprimée');
+    return { success: true };
+
+  } catch (error) {
+    console.error('❌ Erreur suppression:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+export default {
+  subscribeToSubmissions,
+  createAssignment,
+  updateSubmissionStatus,
+  deleteSubmissionFromFirebase
 };

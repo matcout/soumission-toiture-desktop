@@ -1,5 +1,10 @@
-const { app, BrowserWindow, Menu } = require('electron');
-const path = require('path');
+import { app, BrowserWindow, Menu } from 'electron';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow;
@@ -18,13 +23,14 @@ function createWindow() {
       webSecurity: false
     },
     titleBarStyle: 'default',
-    show: false
+    show: false,
+    icon: join(__dirname, '../assets/icon.png') // Optionnel
   });
 
   // Charger l'app
   const startUrl = isDev 
     ? 'http://localhost:5173' 
-    : `file://${path.join(__dirname, '../dist/index.html')}`;
+    : `file://${join(__dirname, '../dist/index.html')}`;
   
   mainWindow.loadURL(startUrl);
 
@@ -80,7 +86,7 @@ function createWindow() {
         {
           label: 'À propos',
           click: () => {
-            // Ouvrir dialogue à propos
+            console.log('À propos de Soumission Toiture Desktop');
           }
         }
       ]
@@ -96,17 +102,19 @@ function createWindow() {
 }
 
 // App events
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
-  }
-});
-
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
   }
 });
 
@@ -115,4 +123,13 @@ app.on('web-contents-created', (event, contents) => {
   contents.on('new-window', (navigationEvent, navigationUrl) => {
     navigationEvent.preventDefault();
   });
+});
+
+// Gestion des erreurs
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
