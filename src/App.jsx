@@ -350,9 +350,78 @@ function App() {
             </p>
           </div>
         )}
+{/* 📸 SECTION PHOTOS - VERSION SANS BOUCLE INFINIE */}
+{submission.photos && submission.photos.length > 0 && (
+  <div className="mb-3">
+    <p className="text-xs font-medium text-gray-700 mb-2">Photos ({submission.photos.length}):</p>
+    <div className="flex gap-2">
+      {submission.photos.slice(0, 3).map((photo, index) => {
+        // Gérer si c'est un objet {id, uri} ou une string directe
+        const photoUrl = typeof photo === 'string' ? photo : photo.uri || photo.url;
+        
+        // Vérifier si c'est un chemin local (file://)
+        const isLocalFile = photoUrl && photoUrl.startsWith('file://');
+        
+        // Si c'est un fichier local, afficher placeholder
+        if (isLocalFile) {
+          return (
+            <div key={index} className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center border border-gray-300">
+              <div className="text-center">
+                <span className="text-xs text-gray-500">📷</span>
+                <span className="text-xs text-gray-400 block">Local</span>
+              </div>
+            </div>
+          );
+        }
+        
+        // Si pas d'URL valide
+        if (!photoUrl || photoUrl === 'undefined') {
+          return (
+            <div key={index} className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
+              <span className="text-xs text-gray-500">❌</span>
+            </div>
+          );
+        }
+        
+        // URL Firebase valide
+        return (
+          <div key={index} className="relative group">
+            <img 
+              src={photoUrl} 
+              alt={`Photo ${index + 1}`}
+              className="w-16 h-16 object-cover rounded border border-gray-200 cursor-pointer hover:border-blue-400"
+              onClick={() => window.open(photoUrl, '_blank')}
+            />
+            <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 rounded transition-opacity" />
+          </div>
+        );
+      })}
+      {submission.photos.length > 3 && (
+        <div className="w-16 h-16 bg-gray-100 rounded flex items-center justify-center text-sm font-medium text-gray-600 border border-gray-200">
+          +{submission.photos.length - 3}
+        </div>
+      )}
+    </div>
+  </div>
+)}
 
         <div className="flex space-x-2">
-          <button className="flex-1 flex items-center justify-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100">
+         <button 
+            onClick={() => {
+              // Préparer les données pour le calculateur
+              const prefilledData = {
+                superficie: submission.toiture?.superficie?.totale || 0,
+                parapets: submission.toiture?.superficie?.parapets || 0,
+                nbMax: submission.materiaux?.nbMax || 0,
+                nbEvents: submission.materiaux?.nbEvents || 0,
+                nbDrains: submission.materiaux?.nbDrains || 0,
+              };
+              
+              setSelectedSubmission({ ...submission, prefilledData });
+              setActiveView('calculator');
+            }}
+            className="flex-1 flex items-center justify-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100"
+          >
             <Eye className="w-3 h-3 mr-1" />
             Voir
           </button>
