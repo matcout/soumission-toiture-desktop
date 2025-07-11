@@ -102,12 +102,9 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit }) => {
               </div>
               <div>
                 <h4 className="font-medium text-blue-900 mb-1">
-                  Assignment pour l'équipe terrain
+                  Toiture à aller prendre mesure
                 </h4>
-                <p className="text-sm text-blue-700">
-                  Cette soumission apparaîtra dans "Aller prendre mesure" sur l'app mobile. 
-                  L'équipe pourra la compléter avec photos et mesures sur le terrain.
-                </p>
+               
               </div>
             </div>
           </div>
@@ -201,28 +198,7 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit }) => {
               </p>
             </div>
 
-            {/* Workflow preview */}
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-              <h4 className="font-medium text-gray-900 mb-3">Workflow après création :</h4>
-              <div className="space-y-2 text-sm text-gray-600">
-                <div className="flex items-center space-x-2">
-                  <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                  <span>📱 Apparaît dans "Aller prendre mesure" sur mobile</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
-                  <span>📋 Équipe complète avec photos et mesures</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                  <span>💻 Sync automatique vers "À compléter" desktop</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                  <span>🧮 Calculs matériaux avec FastNstick 2025</span>
-                </div>
-              </div>
-            </div>
+          
 
             {/* Boutons */}
             <div className="flex space-x-4 pt-4">

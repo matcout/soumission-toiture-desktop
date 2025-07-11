@@ -9,8 +9,10 @@ import CalculatorView from './CalculatorView'
 import AssignmentModal from './AssignmentModal'
 import FolderManagementModal from './FolderManagementModal'
 import { useNotifications, NotificationContainer } from './NotificationSystem'
+import SubmissionViewer from './SubmissionViewer'
 
 // Icônes disponibles avec mapping mobile → desktop
+
 const ICON_COMPONENTS = {
   'FileText': FileText,
   'Clock': Clock,
@@ -36,6 +38,7 @@ const ICON_COMPONENTS = {
 
 function App() {
   // États principaux
+  
   const [submissions, setSubmissions] = useState([])
   const [folders, setFolders] = useState({})
   const [loading, setLoading] = useState(true)
@@ -52,6 +55,8 @@ function App() {
   const [showFolderMenu, setShowFolderMenu] = useState(null)
   
   const { notifications, removeNotification, showSuccess, showError } = useNotifications()
+  const [currentView, setCurrentView] = useState('dashboard') // 'dashboard' ou 'viewer'
+
 
   // Initialisation Firebase et dossiers
   useEffect(() => {
@@ -406,25 +411,16 @@ function App() {
 )}
 
         <div className="flex space-x-2">
-         <button 
-            onClick={() => {
-              // Préparer les données pour le calculateur
-              const prefilledData = {
-                superficie: submission.toiture?.superficie?.totale || 0,
-                parapets: submission.toiture?.superficie?.parapets || 0,
-                nbMax: submission.materiaux?.nbMax || 0,
-                nbEvents: submission.materiaux?.nbEvents || 0,
-                nbDrains: submission.materiaux?.nbDrains || 0,
-              };
-              
-              setSelectedSubmission({ ...submission, prefilledData });
-              setActiveView('calculator');
-            }}
-            className="flex-1 flex items-center justify-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100"
-          >
-            <Eye className="w-3 h-3 mr-1" />
-            Voir
-          </button>
+     <button 
+  onClick={() => {
+    setSelectedSubmission(submission);
+    setCurrentView('viewer');
+  }}
+  className="flex-1 flex items-center justify-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100"
+>
+  <Eye className="w-3 h-3 mr-1" />
+  Voir
+</button>
           {selectedFolder === 'system_pending' && (
             <button 
               onClick={() => handleCalculateSubmission(submission)}
@@ -758,59 +754,53 @@ function App() {
     )
   }
 
-  return (
-    <div className="flex h-screen bg-white">
-      <Sidebar />
-      <MainContent />
-
-      {/* Modals */}
-      <AssignmentModal
-        isOpen={showAssignmentModal}
-        onClose={() => setShowAssignmentModal(false)}
-        onSubmit={handleSubmitAssignment}
+return (
+  <>
+    {currentView === 'viewer' && selectedSubmission ? (
+      <SubmissionViewer
+        submission={selectedSubmission}
+        onBack={() => {
+          setCurrentView('dashboard');
+          setSelectedSubmission(null);
+        }}
+        onUpdate={(updatedSubmission) => {
+          console.log('Submission mise à jour:', updatedSubmission);
+        }}
       />
+    ) : (
+      <div className="flex h-screen bg-white">
+        <Sidebar />
+        <MainContent />
 
-      <FolderManagementModal
-        isOpen={folderModal.show}
-        onClose={() => setFolderModal({ show: false, folder: null, parentFolder: null })}
-        onSave={handleSaveFolder}
-        folder={folderModal.folder}
-        parentFolder={folderModal.parentFolder}
-      />
+        {/* Modals */}
+        <AssignmentModal
+          isOpen={showAssignmentModal}
+          onClose={() => setShowAssignmentModal(false)}
+          onSubmit={handleSubmitAssignment}
+        />
 
-      {deleteModal.show && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md mx-4">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Confirmer la suppression
-            </h3>
-            <p className="text-gray-600 mb-6">
-              Supprimer "{deleteModal.submission?.address}" ?
-            </p>
-            <div className="flex space-x-3">
-              <button
-                onClick={() => setDeleteModal({ show: false, submission: null })}
-                className="flex-1 px-4 py-2 text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg"
-              >
-                Annuler
-              </button>
-              <button
-                onClick={confirmDeleteSubmission}
-                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
-              >
-                Supprimer
-              </button>
-            </div>
+        <FolderManagementModal
+          isOpen={folderModal.show}
+          onClose={() => setFolderModal({ show: false, folder: null, parentFolder: null })}
+          onSave={handleSaveFolder}
+          folder={folderModal.folder}
+          parentFolder={folderModal.parentFolder}
+        />
+
+        {deleteModal.show && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            {/* ... votre code modal suppression ... */}
           </div>
-        </div>
-      )}
+        )}
 
-      <NotificationContainer
-        notifications={notifications}
-        onRemove={removeNotification}
-      />
-    </div>
-  )
+        <NotificationContainer
+          notifications={notifications}
+          onRemove={removeNotification}
+        />
+      </div>
+    )}
+  </>
+)
 }
 
 export default App
