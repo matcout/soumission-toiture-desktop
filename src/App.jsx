@@ -1,5 +1,6 @@
-// App.jsx - Version corrigée et fonctionnelle
-import React, { useState, useEffect } from 'react'
+// App.jsx - Fix pour préserver le scroll lors d'ouverture du menu contextuel
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import ReactDOM from 'react-dom'
 import { Building2, Calculator, Home, Plus, Folder, Clock, CheckCircle2, FileText, RefreshCw, ChevronRight, Trash2, Eye, MoreVertical, FolderPlus } from 'lucide-react'
 import { subscribeToSubmissions, createAssignment, updateSubmissionStatus, deleteSubmissionFromFirebase } from './firebaseFunctions'
 import { testFirebaseConnection } from './firebase'
@@ -12,7 +13,6 @@ import { useNotifications, NotificationContainer } from './NotificationSystem'
 import SubmissionViewer from './SubmissionViewer'
 
 // Icônes disponibles avec mapping mobile → desktop
-
 const ICON_COMPONENTS = {
   'FileText': FileText,
   'Clock': Clock,
@@ -36,9 +36,73 @@ const ICON_COMPONENTS = {
   'FolderPlus': FolderPlus
 }
 
+// Composant Menu Contextuel en Portail
+const ContextMenu = ({ folder, position, onClose, onEdit, onDelete, onAddSubfolder }) => {
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (!e.target.closest('.context-menu-portal')) {
+        onClose()
+      }
+    }
+    
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [onClose])
+
+  if (!folder) return null
+
+  const menuContent = (
+    <div 
+      className="context-menu-portal"
+      style={{
+        position: 'fixed',
+        top: position.y,
+        left: position.x,
+        zIndex: 9999
+      }}
+    >
+      <div className="bg-white border rounded-lg shadow-lg py-1 w-48">
+        {folder.level === 0 && (
+          <button
+            onClick={() => {
+              onAddSubfolder(folder)
+              onClose()
+            }}
+            className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Ajouter sous-dossier
+          </button>
+        )}
+        <button
+          onClick={() => {
+            onEdit(folder)
+            onClose()
+          }}
+          className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center"
+        >
+          <FileText className="w-4 h-4 mr-2" />
+          Modifier
+        </button>
+        <button
+          onClick={() => {
+            onDelete(folder.id, folder.label)
+            onClose()
+          }}
+          className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center"
+        >
+          <Trash2 className="w-4 h-4 mr-2" />
+          Supprimer
+        </button>
+      </div>
+    </div>
+  )
+
+  return ReactDOM.createPortal(menuContent, document.body)
+}
+
 function App() {
   // États principaux
-  
   const [submissions, setSubmissions] = useState([])
   const [folders, setFolders] = useState({})
   const [loading, setLoading] = useState(true)
@@ -52,11 +116,101 @@ function App() {
   const [deleteModal, setDeleteModal] = useState({ show: false, submission: null })
   const [folderModal, setFolderModal] = useState({ show: false, folder: null, parentFolder: null })
   const [expandedFolders, setExpandedFolders] = useState([])
-  const [showFolderMenu, setShowFolderMenu] = useState(null)
   
   const { notifications, removeNotification, showSuccess, showError } = useNotifications()
-  const [currentView, setCurrentView] = useState('dashboard') // 'dashboard' ou 'viewer'
+  const [currentView, setCurrentView] = useState('dashboard')
 
+  // État pour le menu contextuel avec position - NOUVELLE GESTION
+  const [contextMenu, setContextMenu] = useState({ 
+    show: false, 
+    folder: null, 
+    position: { x: 0, y: 0 } 
+  })
+
+  // Refs pour gérer le scroll
+  const sidebarScrollRef = useRef(null)
+  const scrollPositionRef = useRef(0) // NOUVEAU: stocker position scroll
+  const [isUpdatingFolders, setIsUpdatingFolders] = useState(false)
+  const [pendingFolderUpdate, setPendingFolderUpdate] = useState(null)
+
+  // NOUVELLE FONCTION: Préserver scroll lors d'actions UI
+  const preserveScrollPosition = useCallback(() => {
+    if (sidebarScrollRef.current) {
+      scrollPositionRef.current = sidebarScrollRef.current.scrollTop
+    }
+  }, [])
+
+  // NOUVELLE FONCTION: Restaurer scroll
+  const restoreScrollPosition = useCallback(() => {
+    if (sidebarScrollRef.current && scrollPositionRef.current > 0) {
+      // Utiliser setTimeout pour s'assurer que le DOM est à jour
+      setTimeout(() => {
+        if (sidebarScrollRef.current) {
+          sidebarScrollRef.current.scrollTop = scrollPositionRef.current
+        }
+      }, 0)
+    }
+  }, [])
+
+  // FONCTION AMÉLIORER: Gestion menu contextuel avec préservation scroll
+  const handleContextMenu = useCallback((folder, position, level) => {
+    // Préserver la position avant d'ouvrir le menu
+    preserveScrollPosition()
+    
+    setContextMenu({
+      show: true,
+      folder: { ...folder, level },
+      position
+    })
+    
+    // Restaurer le scroll après le rendu
+    restoreScrollPosition()
+  }, [preserveScrollPosition, restoreScrollPosition])
+
+  // FONCTION AMÉLIORER: Fermer menu contextuel
+  const closeContextMenu = useCallback(() => {
+    setContextMenu({ show: false, folder: null, position: { x: 0, y: 0 } })
+  }, [])
+
+  // Mémoriser la structure des dossiers avec useCallback pour stabilité
+  const organizedFolders = useMemo(() => {
+    const rootFolders = []
+    const folderMap = {}
+    
+    Object.values(folders).forEach(folder => {
+      folderMap[folder.id] = { ...folder, children: [] }
+    })
+    
+    Object.values(folderMap).forEach(folder => {
+      if (folder.parentId && folderMap[folder.parentId]) {
+        folderMap[folder.parentId].children.push(folder)
+      } else if (!folder.parentId) {
+        rootFolders.push(folder)
+      }
+    })
+    
+    rootFolders.sort((a, b) => a.order - b.order)
+    Object.values(folderMap).forEach(folder => {
+      if (folder.children) {
+        folder.children.sort((a, b) => a.order - b.order)
+      }
+    })
+    
+    return rootFolders
+  }, [folders])
+
+  // Effet pour appliquer les mises à jour en attente AVEC préservation scroll
+  useEffect(() => {
+    if (!isUpdatingFolders && pendingFolderUpdate) {
+      preserveScrollPosition()
+      setFolders(pendingFolderUpdate)
+      setPendingFolderUpdate(null)
+      // Restaurer scroll après mise à jour
+      requestAnimationFrame(() => {
+        restoreScrollPosition()
+      })
+    }
+  }, [isUpdatingFolders, pendingFolderUpdate, preserveScrollPosition, restoreScrollPosition])
 
   // Initialisation Firebase et dossiers
   useEffect(() => {
@@ -71,16 +225,13 @@ function App() {
         setFirebaseConnected(connected)
         
         if (connected) {
-          // Initialiser les dossiers centralisés
           const folderResult = await initializeCentralizedFolders('desktop')
           console.log('📁 Dossiers initialisés:', folderResult)
           
-          // S'abonner aux changements de dossiers
           unsubscribeFolders = subscribeToFolders((result) => {
             if (result.success) {
               const foldersMap = {}
               result.data.forEach(folder => {
-                // Convertir l'icône mobile vers desktop
                 const desktopIcon = convertIconMobileToDesktop(folder.icon)
                 foldersMap[folder.id] = {
                   ...folder,
@@ -90,12 +241,20 @@ function App() {
                     : (submissions) => []
                 }
               })
-              setFolders(foldersMap)
+              
+              if (isUpdatingFolders) {
+                setPendingFolderUpdate(foldersMap)
+              } else {
+                // Préserver scroll lors de mise à jour normale
+                preserveScrollPosition()
+                setFolders(foldersMap)
+                restoreScrollPosition()
+              }
+              
               console.log(`✅ ${result.data.length} dossiers synchronisés`)
             }
           })
           
-          // S'abonner aux soumissions
           unsubscribeSubmissions = subscribeToSubmissions((result) => {
             if (result.success) {
               setSubmissions(result.data)
@@ -126,60 +285,71 @@ function App() {
         unsubscribeFolders()
       }
     }
-  }, [])
+  }, [isUpdatingFolders, preserveScrollPosition, restoreScrollPosition])
 
-  // Gérer la création/modification de dossier
-  const handleSaveFolder = async (folderData) => {
+  // Fonction helper pour maintenir le scroll - AMÉLIORÉE
+  const withScrollPreservation = async (operation) => {
+    preserveScrollPosition()
+    setIsUpdatingFolders(true)
+    
     try {
-      setLoading(true)
-      
-      if (folderData.id) {
-        // Modification
-        const result = await updateFolderInFirebase(folderData.id, {
-          label: folderData.label,
-          icon: folderData.icon,
-          color: folderData.color
-        }, 'desktop')
-        
-        if (result.success) {
-          showSuccess('Dossier modifié', `"${folderData.label}" a été mis à jour`)
-        } else {
-          showError('Erreur modification', result.error)
-        }
-      } else {
-        // Création
-        const newFolder = {
-          label: folderData.label,
-          icon: folderData.icon,
-          color: folderData.color,
-          order: Object.keys(folders).length,
-          level: folderData.parentId ? 1 : 0,
-          parentId: folderData.parentId || null,
-          isSystemFolder: false,
-          isDeletable: true,
-          isEditable: true,
-          filterConfig: null
-        }
-        
-        const result = await saveFolderToFirebase(newFolder, 'desktop')
-        
-        if (result.success) {
-          showSuccess('Dossier créé', `"${folderData.label}" a été ajouté`)
-        } else {
-          showError('Erreur création', result.error)
-        }
-      }
-    } catch (error) {
-      showError('Erreur', error.message)
+      await operation()
+      await new Promise(resolve => setTimeout(resolve, 100))
     } finally {
-      setLoading(false)
-      setFolderModal({ show: false, folder: null, parentFolder: null })
+      setIsUpdatingFolders(false)
+      // Le scroll sera restauré par useEffect ci-dessus
     }
   }
 
-  // Supprimer un dossier
+  const handleSaveFolder = async (folderData) => {
+    await withScrollPreservation(async () => {
+      try {
+        setLoading(true)
+        
+        if (folderData.id) {
+          const result = await updateFolderInFirebase(folderData.id, {
+            label: folderData.label,
+            icon: folderData.icon,
+            color: folderData.color
+          }, 'desktop')
+          
+          if (result.success) {
+            showSuccess('Dossier modifié', `"${folderData.label}" a été mis à jour`)
+          } else {
+            showError('Erreur modification', result.error)
+          }
+        } else {
+          const newFolder = {
+            label: folderData.label,
+            icon: folderData.icon,
+            color: folderData.color,
+            order: Object.keys(folders).length,
+            level: folderData.parentId ? 1 : 0,
+            parentId: folderData.parentId || null,
+            isSystemFolder: false,
+            isDeletable: true,
+            isEditable: true,
+            filterConfig: null
+          }
+          
+          const result = await saveFolderToFirebase(newFolder, 'desktop')
+          
+          if (result.success) {
+            showSuccess('Dossier créé', `"${folderData.label}" a été ajouté`)
+          } else {
+            showError('Erreur création', result.error)
+          }
+        }
+      } catch (error) {
+        showError('Erreur', error.message)
+      } finally {
+        setLoading(false)
+        setFolderModal({ show: false, folder: null, parentFolder: null })
+      }
+    })
+  }
+
   const handleDeleteFolder = async (folderId, folderLabel) => {
-    // Protéger seulement les 3 dossiers essentiels
     if (folderId === 'system_assignments' || 
         folderId === 'system_pending' || 
         folderId === 'system_completed') {
@@ -188,19 +358,21 @@ function App() {
     }
     
     if (window.confirm(`Supprimer le dossier "${folderLabel}" ?`)) {
-      try {
-        const result = await deleteFolderFromFirebase(folderId)
-        if (result.success) {
-          showSuccess('Dossier supprimé', `"${folderLabel}" a été supprimé`)
-          if (selectedFolder === folderId) {
-            setSelectedFolder('system_assignments')
+      await withScrollPreservation(async () => {
+        try {
+          const result = await deleteFolderFromFirebase(folderId)
+          if (result.success) {
+            showSuccess('Dossier supprimé', `"${folderLabel}" a été supprimé`)
+            if (selectedFolder === folderId) {
+              setSelectedFolder('system_assignments')
+            }
+          } else {
+            showError('Erreur suppression', result.error)
           }
-        } else {
-          showError('Erreur suppression', result.error)
+        } catch (error) {
+          showError('Erreur', error.message)
         }
-      } catch (error) {
-        showError('Erreur', error.message)
-      }
+      })
     }
   }
 
@@ -234,7 +406,6 @@ function App() {
     }
   }
 
-  // Gérer le calcul
   const handleCalculateSubmission = (submission) => {
     const prefilledData = {
       superficie: submission.toiture?.superficie?.totale || 0,
@@ -248,7 +419,18 @@ function App() {
     setActiveView('calculator')
   }
 
-  // Sauvegarder le calcul
+  const handleBackFromCalculator = () => {
+    if (selectedSubmission) {
+      // Si on vient d'une soumission spécifique, on retourne au dossier approprié
+      const submissionFolder = selectedSubmission.status === 'assignment' ? 'system_assignments' : 
+                              selectedSubmission.status === 'captured' ? 'system_pending' : 
+                              'system_completed'
+      setSelectedFolder(submissionFolder)
+    }
+    setActiveView('dashboard')
+    setSelectedSubmission(null)
+  }
+
   const handleSaveCalculation = async (calculationData) => {
     if (selectedSubmission) {
       try {
@@ -272,7 +454,6 @@ function App() {
     }
   }
 
-  // Supprimer une soumission
   const confirmDeleteSubmission = async () => {
     const { id } = deleteModal.submission
     
@@ -355,72 +536,66 @@ function App() {
             </p>
           </div>
         )}
-{/* 📸 SECTION PHOTOS - VERSION SANS BOUCLE INFINIE */}
-{submission.photos && submission.photos.length > 0 && (
-  <div className="mb-3">
-    <p className="text-xs font-medium text-gray-700 mb-2">Photos ({submission.photos.length}):</p>
-    <div className="flex gap-2">
-      {submission.photos.slice(0, 3).map((photo, index) => {
-        // Gérer si c'est un objet {id, uri} ou une string directe
-        const photoUrl = typeof photo === 'string' ? photo : photo.uri || photo.url;
-        
-        // Vérifier si c'est un chemin local (file://)
-        const isLocalFile = photoUrl && photoUrl.startsWith('file://');
-        
-        // Si c'est un fichier local, afficher placeholder
-        if (isLocalFile) {
-          return (
-            <div key={index} className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center border border-gray-300">
-              <div className="text-center">
-                <span className="text-xs text-gray-500">📷</span>
-                <span className="text-xs text-gray-400 block">Local</span>
-              </div>
+
+        {submission.photos && submission.photos.length > 0 && (
+          <div className="mb-3">
+            <p className="text-xs font-medium text-gray-700 mb-2">Photos ({submission.photos.length}):</p>
+            <div className="flex gap-2">
+              {submission.photos.slice(0, 3).map((photo, index) => {
+                const photoUrl = typeof photo === 'string' ? photo : photo.uri || photo.url;
+                const isLocalFile = photoUrl && photoUrl.startsWith('file://');
+                
+                if (isLocalFile) {
+                  return (
+                    <div key={index} className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center border border-gray-300">
+                      <div className="text-center">
+                        <span className="text-xs text-gray-500">📷</span>
+                        <span className="text-xs text-gray-400 block">Local</span>
+                      </div>
+                    </div>
+                  );
+                }
+                
+                if (!photoUrl || photoUrl === 'undefined') {
+                  return (
+                    <div key={index} className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
+                      <span className="text-xs text-gray-500">❌</span>
+                    </div>
+                  );
+                }
+                
+                return (
+                  <div key={index} className="relative group">
+                    <img 
+                      src={photoUrl} 
+                      alt={`Photo ${index + 1}`}
+                      className="w-16 h-16 object-cover rounded border border-gray-200 cursor-pointer hover:border-blue-400"
+                      onClick={() => window.open(photoUrl, '_blank')}
+                    />
+                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 rounded transition-opacity" />
+                  </div>
+                );
+              })}
+              {submission.photos.length > 3 && (
+                <div className="w-16 h-16 bg-gray-100 rounded flex items-center justify-center text-sm font-medium text-gray-600 border border-gray-200">
+                  +{submission.photos.length - 3}
+                </div>
+              )}
             </div>
-          );
-        }
-        
-        // Si pas d'URL valide
-        if (!photoUrl || photoUrl === 'undefined') {
-          return (
-            <div key={index} className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
-              <span className="text-xs text-gray-500">❌</span>
-            </div>
-          );
-        }
-        
-        // URL Firebase valide
-        return (
-          <div key={index} className="relative group">
-            <img 
-              src={photoUrl} 
-              alt={`Photo ${index + 1}`}
-              className="w-16 h-16 object-cover rounded border border-gray-200 cursor-pointer hover:border-blue-400"
-              onClick={() => window.open(photoUrl, '_blank')}
-            />
-            <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 rounded transition-opacity" />
           </div>
-        );
-      })}
-      {submission.photos.length > 3 && (
-        <div className="w-16 h-16 bg-gray-100 rounded flex items-center justify-center text-sm font-medium text-gray-600 border border-gray-200">
-          +{submission.photos.length - 3}
-        </div>
-      )}
-    </div>
-  </div>
-)}
+        )}
 
         <div className="flex space-x-2">
-     <button 
-  onClick={() => {
-    setSelectedSubmission(submission);
-    setCurrentView('viewer');
-  }}
-  className="flex-1 flex items-center justify-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100"
->
-  <Eye className="w-3 h-3 mr-1" />
-  Voir
-</button>
+          <button 
+            onClick={() => {
+              setSelectedSubmission(submission);
+              setCurrentView('viewer');
+            }}
+            className="flex-1 flex items-center justify-center px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-50 border border-gray-200 rounded hover:bg-gray-100"
+          >
+            <Eye className="w-3 h-3 mr-1" />
+            Voir
+          </button>
           {selectedFolder === 'system_pending' && (
             <button 
               onClick={() => handleCalculateSubmission(submission)}
@@ -435,21 +610,34 @@ function App() {
     )
   }
 
-  // Fonctions helper
   const getFolderCount = (folder) => {
     return folder.filter ? folder.filter(submissions).length : 0
   }
 
-  const renderFolder = (folder, level = 0) => {
+  // Composant Folder AMÉLIORÉ avec gestion correcte du menu contextuel
+  const FolderItem = React.memo(({ folder, level }) => {
     const Icon = ICON_COMPONENTS[folder.icon] || Folder
     const count = getFolderCount(folder)
     const isSelected = selectedFolder === folder.id
     const hasChildren = folder.children && folder.children.length > 0
     const isExpanded = expandedFolders.includes(folder.id)
     
+    // NOUVELLE FONCTION: Gérer menu avec préservation scroll
+    const handleMenuClick = useCallback((e) => {
+      e.stopPropagation()
+      const rect = e.currentTarget.getBoundingClientRect()
+      
+      // Utiliser la nouvelle fonction qui préserve le scroll
+      handleContextMenu(folder, { 
+        x: rect.left - 150, 
+        y: rect.bottom + 5 
+      }, level)
+    }, [folder, level, handleContextMenu])
+    
     return (
-      <div key={folder.id}>
+      <div>
         <div
+          data-folder-id={folder.id}
           className={`group flex items-center justify-between py-2.5 px-3 text-sm rounded-lg ${
             isSelected
               ? 'bg-blue-50 text-blue-700 font-medium'
@@ -475,64 +663,18 @@ function App() {
               </span>
             )}
             
-            {/* Menu contextuel pour tous les dossiers sauf les 3 essentiels */}
+            {/* Menu contextuel seulement pour les dossiers non-système */}
             {folder.id !== 'system_assignments' && 
              folder.id !== 'system_pending' && 
              folder.id !== 'system_completed' && (
-              <div className="relative">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setShowFolderMenu(showFolderMenu === folder.id ? null : folder.id)
-                  }}
-                  className="p-1 opacity-0 group-hover:opacity-100 hover:bg-gray-200 rounded"
-                >
-                  <MoreVertical className="w-3 h-3" />
-                </button>
-                
-                {showFolderMenu === folder.id && (
-                  <>
-                    <div className="absolute right-0 top-8 bg-white border rounded-lg shadow-lg z-20 py-1 w-48">
-                      {level === 0 && (
-                        <button
-                          onClick={() => {
-                            setFolderModal({ show: true, folder: null, parentFolder: folder })
-                            setShowFolderMenu(null)
-                          }}
-                          className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center"
-                        >
-                          <Plus className="w-4 h-4 mr-2" />
-                          Ajouter sous-dossier
-                        </button>
-                      )}
-                      <button
-                        onClick={() => {
-                          setFolderModal({ show: true, folder: folder, parentFolder: null })
-                          setShowFolderMenu(null)
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center"
-                      >
-                        <FileText className="w-4 h-4 mr-2" />
-                        Modifier
-                      </button>
-                      <button
-                        onClick={() => {
-                          handleDeleteFolder(folder.id, folder.label)
-                          setShowFolderMenu(null)
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center"
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        Supprimer
-                      </button>
-                    </div>
-                    <div className="fixed inset-0 z-10" onClick={() => setShowFolderMenu(null)} />
-                  </>
-                )}
-              </div>
+              <button
+                onClick={handleMenuClick}
+                className="p-1 opacity-0 group-hover:opacity-100 hover:bg-gray-200 rounded"
+              >
+                <MoreVertical className="w-3 h-3" />
+              </button>
             )}
             
-            {/* Chevron pour dossiers avec enfants */}
             {hasChildren && (
               <button
                 onClick={() => {
@@ -550,47 +692,17 @@ function App() {
           </div>
         </div>
         
-        {/* Rendu des sous-dossiers */}
         {hasChildren && isExpanded && (
           <div>
-            {folder.children.map(childFolder => renderFolder(childFolder, level + 1))}
+            {folder.children.map(childFolder => (
+              <FolderItem key={childFolder.id} folder={childFolder} level={level + 1} />
+            ))}
           </div>
         )}
       </div>
     )
-  }
+  })
 
-  // Organiser les dossiers en hiérarchie
-  const organizedFolders = () => {
-    const rootFolders = []
-    const folderMap = {}
-    
-    // Créer une map de tous les dossiers
-    Object.values(folders).forEach(folder => {
-      folderMap[folder.id] = { ...folder, children: [] }
-    })
-    
-    // Organiser en hiérarchie
-    Object.values(folderMap).forEach(folder => {
-      if (folder.parentId && folderMap[folder.parentId]) {
-        folderMap[folder.parentId].children.push(folder)
-      } else if (!folder.parentId) {
-        rootFolders.push(folder)
-      }
-    })
-    
-    // Trier par ordre
-    rootFolders.sort((a, b) => a.order - b.order)
-    Object.values(folderMap).forEach(folder => {
-      if (folder.children) {
-        folder.children.sort((a, b) => a.order - b.order)
-      }
-    })
-    
-    return rootFolders
-  }
-
-  // Sidebar
   const Sidebar = () => (
     <div className="w-80 bg-gray-50 border-r border-gray-200 flex flex-col h-screen">
       <div className="p-4 border-b border-gray-200 bg-white">
@@ -638,11 +750,25 @@ function App() {
         </button>
       </div>
 
-      <div className="flex-1 p-4 overflow-y-auto">
+      {/* SIDEBAR AVEC REF AMÉLIORÉE */}
+      <div 
+        key="sidebar-scroll"
+        ref={sidebarScrollRef}
+        className="flex-1 p-4 overflow-y-auto"
+        onScroll={() => {
+          // Stocker continuellement la position
+          if (sidebarScrollRef.current) {
+            scrollPositionRef.current = sidebarScrollRef.current.scrollTop
+          }
+        }}
+      >
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-gray-600 uppercase">Dossiers</h3>
           <button
-            onClick={() => setFolderModal({ show: true, folder: null, parentFolder: null })}
+            onClick={() => {
+              preserveScrollPosition()
+              setFolderModal({ show: true, folder: null, parentFolder: null })
+            }}
             className="p-1 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded"
             title="Créer un dossier"
           >
@@ -651,7 +777,9 @@ function App() {
         </div>
         
         <div className="space-y-1">
-          {organizedFolders().map(folder => renderFolder(folder, 0))}
+          {organizedFolders.map(folder => (
+            <FolderItem key={folder.id} folder={folder} level={0} />
+          ))}
         </div>
       </div>
 
@@ -669,7 +797,6 @@ function App() {
     </div>
   )
 
-  // Contenu principal
   const MainContent = () => {
     if (loading) {
       return (
@@ -682,30 +809,6 @@ function App() {
       )
     }
 
-    if (activeView === 'calculator') {
-      return (
-        <div className="flex-1 p-6 overflow-y-auto">
-          <div className="max-w-7xl mx-auto">
-            <div className="mb-6">
-              <button
-                onClick={() => setActiveView('dashboard')}
-                className="flex items-center text-sm text-gray-600 hover:text-gray-900 mb-4"
-              >
-                <ChevronRight className="w-4 h-4 mr-1 rotate-180" />
-                Retour aux dossiers
-              </button>
-              <h1 className="text-2xl font-bold text-gray-900">Calculateur FastNstick 2025</h1>
-            </div>
-            <CalculatorView 
-              prefilledData={selectedSubmission?.prefilledData}
-              onSaveCalculation={handleSaveCalculation}
-            />
-          </div>
-        </div>
-      )
-    }
-
-    // Dashboard
     const currentFolder = folders[selectedFolder]
     const currentSubmissions = currentFolder?.filter 
       ? currentFolder.filter(submissions)
@@ -754,53 +857,144 @@ function App() {
     )
   }
 
-return (
-  <>
-    {currentView === 'viewer' && selectedSubmission ? (
-      <SubmissionViewer
-        submission={selectedSubmission}
-        onBack={() => {
-          setCurrentView('dashboard');
-          setSelectedSubmission(null);
-        }}
-        onUpdate={(updatedSubmission) => {
-          console.log('Submission mise à jour:', updatedSubmission);
-        }}
-      />
-    ) : (
-      <div className="flex h-screen bg-white">
-        <Sidebar />
-        <MainContent />
-
-        {/* Modals */}
-        <AssignmentModal
-          isOpen={showAssignmentModal}
-          onClose={() => setShowAssignmentModal(false)}
-          onSubmit={handleSubmitAssignment}
-        />
-
-        <FolderManagementModal
-          isOpen={folderModal.show}
-          onClose={() => setFolderModal({ show: false, folder: null, parentFolder: null })}
-          onSave={handleSaveFolder}
-          folder={folderModal.folder}
-          parentFolder={folderModal.parentFolder}
-        />
-
-        {deleteModal.show && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            {/* ... votre code modal suppression ... */}
+  // Vue calculateur en pleine page
+  if (activeView === 'calculator') {
+    return (
+      <div className="h-screen bg-gray-50">
+        {/* Header simple sans sidebar */}
+        <div className="bg-white border-b border-gray-200 px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={handleBackFromCalculator}
+                className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 transition-colors"
+              >
+                <ChevronRight className="w-5 h-5 rotate-180" />
+                <span className="font-medium">Retour au tableau de bord</span>
+              </button>
+              <div className="w-px h-6 bg-gray-300" />
+              <div>
+                <h1 className="text-xl font-bold text-gray-900">Calculateur FastNstick 2025</h1>
+                {selectedSubmission && (
+                  <p className="text-sm text-gray-600 mt-0.5">
+                    Calcul pour: {selectedSubmission.client?.adresse || selectedSubmission.displayName}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className={`w-2 h-2 rounded-full ${firebaseConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+              <span className="text-sm text-gray-600">
+                {firebaseConnected ? 'Synchronisé' : 'Hors ligne'}
+              </span>
+            </div>
           </div>
-        )}
+        </div>
 
-        <NotificationContainer
-          notifications={notifications}
-          onRemove={removeNotification}
-        />
+        {/* Calculateur en pleine largeur */}
+        <div className="p-8 overflow-y-auto h-[calc(100vh-73px)]">
+          <div className="max-w-[1600px] mx-auto">
+            <CalculatorView 
+              prefilledData={selectedSubmission?.prefilledData}
+              onSaveCalculation={handleSaveCalculation}
+            />
+          </div>
+        </div>
       </div>
-    )}
-  </>
-)
+    )
+  }
+
+  return (
+    <>
+      {currentView === 'viewer' && selectedSubmission ? (
+        <SubmissionViewer
+          submission={selectedSubmission}
+          onBack={() => {
+            setCurrentView('dashboard');
+            setSelectedSubmission(null);
+          }}
+          onUpdate={(updatedSubmission) => {
+            console.log('Submission mise à jour:', updatedSubmission);
+          }}
+        />
+      ) : (
+        <div className="flex h-screen bg-white">
+          <Sidebar />
+          <MainContent />
+
+          {/* Menu contextuel en portail */}
+          {contextMenu.show && (
+            <ContextMenu
+              folder={contextMenu.folder}
+              position={contextMenu.position}
+              onClose={closeContextMenu}
+              onEdit={(folder) => {
+                preserveScrollPosition()
+                setFolderModal({ show: true, folder, parentFolder: null })
+                closeContextMenu()
+              }}
+              onDelete={handleDeleteFolder}
+              onAddSubfolder={(folder) => {
+                preserveScrollPosition()
+                setFolderModal({ show: true, folder: null, parentFolder: folder })
+                closeContextMenu()
+              }}
+            />
+          )}
+
+          {/* Modals */}
+          <AssignmentModal
+            isOpen={showAssignmentModal}
+            onClose={() => setShowAssignmentModal(false)}
+            onSubmit={handleSubmitAssignment}
+          />
+
+          <FolderManagementModal
+            isOpen={folderModal.show}
+            onClose={() => {
+              setFolderModal({ show: false, folder: null, parentFolder: null })
+            }}
+            onSave={handleSaveFolder}
+            folder={folderModal.folder}
+            parentFolder={folderModal.parentFolder}
+          />
+
+          {deleteModal.show && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">
+                  Confirmer la suppression
+                </h3>
+                <p className="text-gray-600 mb-6">
+                  Êtes-vous sûr de vouloir supprimer "{deleteModal.submission?.address}" ?
+                  Cette action est irréversible.
+                </p>
+                <div className="flex space-x-3">
+                  <button
+                    onClick={() => setDeleteModal({ show: false, submission: null })}
+                    className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onClick={confirmDeleteSubmission}
+                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg"
+                  >
+                    Supprimer
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <NotificationContainer
+            notifications={notifications}
+            onRemove={removeNotification}
+          />
+        </div>
+      )}
+    </>
+  )
 }
 
 export default App
