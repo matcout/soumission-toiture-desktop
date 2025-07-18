@@ -117,6 +117,7 @@ function App() {
   const [deleteModal, setDeleteModal] = useState({ show: false, submission: null })
   const [folderModal, setFolderModal] = useState({ show: false, folder: null, parentFolder: null })
   const [expandedFolders, setExpandedFolders] = useState([])
+  const [moveModal, setMoveModal] = useState({ show: false, submission: null })
   
   const { notifications, removeNotification, showSuccess, showError } = useNotifications()
   const [currentView, setCurrentView] = useState('dashboard')
@@ -527,6 +528,23 @@ const handleCalculateSubmission = (submission) => {
     setDeleteModal({ show: false, submission: null })
   }
 
+  const handleMoveSubmission = async (submissionId, newFolderId) => {
+    try {
+      const result = await updateSubmissionStatus(submissionId, null, { 
+        folderId: newFolderId 
+      })
+      
+      if (result.success) {
+        showSuccess('Déplacement réussi', 'La soumission a été déplacée')
+        setMoveModal({ show: false, submission: null })
+      } else {
+        showError('Erreur déplacement', result.error)
+      }
+    } catch (error) {
+      showError('Erreur', error.message)
+    }
+  }
+
   // Carte de soumission
   const SubmissionCard = ({ submission }) => {
     const [showActions, setShowActions] = useState(false)
@@ -554,6 +572,19 @@ const handleCalculateSubmission = (submission) => {
             {showActions && (
               <>
                 <div className="absolute right-0 top-8 bg-white border rounded-lg shadow-lg z-20 py-1">
+                  <button
+                    onClick={() => {
+                      setMoveModal({ 
+                        show: true, 
+                        submission: submission
+                      })
+                      setShowActions(false)
+                    }}
+                    className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center"
+                  >
+                    <Folder className="w-4 h-4 mr-2" />
+                    Déplacer
+                  </button>
                   <button
                     onClick={() => {
                       setDeleteModal({ 
@@ -675,6 +706,61 @@ const handleCalculateSubmission = (submission) => {
 
   const getFolderCount = (folder) => {
     return folder.filter ? folder.filter(submissions).length : 0
+  }
+
+  // Composant pour les options de dossier dans la modal de déplacement
+  const FolderMoveOption = ({ folder, level, currentFolderId, onSelect }) => {
+    const [expanded, setExpanded] = useState(false)
+    const hasChildren = folder.children && folder.children.length > 0
+    const isCurrentFolder = folder.id === currentFolderId
+    const Icon = ICON_COMPONENTS[folder.icon] || Folder
+    
+    return (
+      <div>
+        <div 
+          className={`flex items-center justify-between py-2 px-2 rounded hover:bg-gray-50 cursor-pointer ${
+            isCurrentFolder ? 'bg-gray-100 opacity-50 cursor-not-allowed' : ''
+          }`}
+          style={{ paddingLeft: `${8 + level * 16}px` }}
+        >
+          <button
+            onClick={() => !isCurrentFolder && onSelect(folder.id)}
+            className="flex-1 flex items-center text-left"
+            disabled={isCurrentFolder}
+          >
+            <Icon className="w-4 h-4 mr-2" style={{ color: folder.color }} />
+            <span className="text-sm">{folder.label}</span>
+            {isCurrentFolder && <span className="text-xs text-gray-500 ml-2">(dossier actuel)</span>}
+          </button>
+          
+          {hasChildren && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setExpanded(!expanded)
+              }}
+              className="p-1 hover:bg-gray-200 rounded"
+            >
+              <ChevronRight className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+            </button>
+          )}
+        </div>
+        
+        {hasChildren && expanded && (
+          <div>
+            {folder.children.map(childFolder => (
+              <FolderMoveOption 
+                key={childFolder.id} 
+                folder={childFolder} 
+                level={level + 1}
+                currentFolderId={currentFolderId}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    )
   }
 
   // Composant Folder AMÉLIORÉ avec gestion correcte du menu contextuel
@@ -1049,6 +1135,38 @@ const handleCalculateSubmission = (submission) => {
                     Supprimer
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {moveModal.show && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[80vh] flex flex-col">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">
+                  Déplacer vers un autre dossier
+                </h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  Sélectionnez le dossier de destination pour "{moveModal.submission?.client?.adresse || 'cette soumission'}"
+                </p>
+                
+                <div className="flex-1 overflow-y-auto mb-4 border rounded-lg p-2">
+                  {organizedFolders.map(folder => (
+                    <FolderMoveOption 
+                      key={folder.id} 
+                      folder={folder} 
+                      level={0}
+                      currentFolderId={selectedFolder}
+                      onSelect={(folderId) => handleMoveSubmission(moveModal.submission.id, folderId)}
+                    />
+                  ))}
+                </div>
+                
+                <button
+                  onClick={() => setMoveModal({ show: false, submission: null })}
+                  className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
+                >
+                  Annuler
+                </button>
               </div>
             </div>
           )}
