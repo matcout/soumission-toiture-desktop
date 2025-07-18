@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactDOM from 'react-dom'
 import { Building2, Calculator, Home, Plus, Folder, Clock, CheckCircle2, FileText, RefreshCw, ChevronRight, Trash2, Eye, MoreVertical, FolderPlus } from 'lucide-react'
-import { subscribeToSubmissions, createAssignment, updateSubmissionStatus, deleteSubmissionFromFirebase } from './firebaseFunctions'
+import { subscribeToSubmissions, createAssignment, updateSubmissionStatus, deleteSubmissionFromFirebase, updateSubmissionInFirebase } from './firebaseFunctions'
 import { testFirebaseConnection } from './firebase'
 import { initializeCentralizedFolders, getAllCentralizedFolders, applyFolderFilter } from './centralizedFolderSystem'
 import { subscribeToFolders, convertIconMobileToDesktop, saveFolderToFirebase, updateFolderInFirebase, deleteFolderFromFirebase } from './folderSyncFunctions'
@@ -11,6 +11,7 @@ import AssignmentModal from './AssignmentModal'
 import FolderManagementModal from './FolderManagementModal'
 import { useNotifications, NotificationContainer } from './NotificationSystem'
 import SubmissionViewer from './SubmissionViewer'
+
 
 // Icônes disponibles avec mapping mobile → desktop
 const ICON_COMPONENTS = {
@@ -238,7 +239,13 @@ function App() {
                   icon: desktopIcon,
                   filter: folder.filterConfig 
                     ? (submissions) => applyFolderFilter(folder, submissions)
-                    : (submissions) => []
+                    : (submissions) => {
+                        // Pour les dossiers personnalisés, filtrer par folderId
+                        if (folder.id === 'projet_2025_soumissions') {
+                          return submissions.filter(s => s.folderId === 'projet_2025_soumissions' || s.status === 'completed')
+                        }
+                        return submissions.filter(s => s.folderId === folder.id)
+                      }
                 }
               })
               
@@ -351,8 +358,7 @@ function App() {
 
   const handleDeleteFolder = async (folderId, folderLabel) => {
     if (folderId === 'system_assignments' || 
-        folderId === 'system_pending' || 
-        folderId === 'system_completed') {
+        folderId === 'system_pending') {
       showError('Dossier protégé', 'Ce dossier système ne peut pas être supprimé')
       return
     }
@@ -375,6 +381,26 @@ function App() {
       })
     }
   }
+
+const handleUpdateSubmissionNotes = async (submissionId, updateData) => {
+  try {
+    console.log('🔄 Mise à jour notes soumission:', submissionId, updateData)
+    
+    const result = await updateSubmissionInFirebase(submissionId, updateData)
+    
+    if (result.success) {
+      console.log('✅ Notes mises à jour avec succès')
+      showSuccess('Notes sauvegardées', 'Les modifications ont été enregistrées')
+      return true
+    } else {
+      throw new Error(result.error || 'Erreur de mise à jour')
+    }
+  } catch (error) {
+    console.error('❌ Erreur mise à jour notes:', error)
+    showError('Erreur sauvegarde', error.message)
+    throw error
+  }
+}
 
   // Gérer la création d'assignment
   const handleSubmitAssignment = async (formData) => {
@@ -406,25 +432,35 @@ function App() {
     }
   }
 
-  const handleCalculateSubmission = (submission) => {
-    const prefilledData = {
-      superficie: submission.toiture?.superficie?.totale || 0,
-      parapets: submission.toiture?.superficie?.parapets || 0,
-      nbMax: submission.materiaux?.nbMax || 0,
-      nbEvents: submission.materiaux?.nbEvents || 0,
-      nbDrains: submission.materiaux?.nbDrains || 0,
-    }
+const handleCalculateSubmission = (submission) => {
+  // Passer TOUTE la soumission comme prefilledData pour avoir accès à toutes les données
+  const prefilledData = {
+    superficie: submission.toiture?.superficie?.toiture || 0,
+    parapets: submission.toiture?.superficie?.parapets || 0,
+    nbMax: submission.materiaux?.nbMax || 0,
+    nbEvents: submission.materiaux?.nbEvents || 0,
+    nbDrains: submission.materiaux?.nbDrains || 0,
+    nbFeuilles: submission.materiaux?.nbFeuilles || 0,
+    // Inclure toutes les données de la soumission pour les puits de lumière et autres
+    toiture: submission.toiture,
+    materiaux: submission.materiaux,
+    client: submission.client,
+    options: submission.options,
+    notes: submission.notes,
+    photos: submission.photos
     
-    setSelectedSubmission({ ...submission, prefilledData })
-    setActiveView('calculator')
   }
+  
+  setSelectedSubmission({ ...submission, prefilledData })
+  setActiveView('calculator')
+}
 
   const handleBackFromCalculator = () => {
     if (selectedSubmission) {
       // Si on vient d'une soumission spécifique, on retourne au dossier approprié
       const submissionFolder = selectedSubmission.status === 'assignment' ? 'system_assignments' : 
                               selectedSubmission.status === 'captured' ? 'system_pending' : 
-                              'system_completed'
+                              'projet_2025_soumissions'
       setSelectedFolder(submissionFolder)
     }
     setActiveView('dashboard')
@@ -434,16 +470,36 @@ function App() {
   const handleSaveCalculation = async (calculationData) => {
     if (selectedSubmission) {
       try {
+        // Trouver le sous-dossier "Soumissions" de "Projet 2025"
+        let targetFolderId = null;
+        const projet2025 = Object.values(folders).find(f => 
+          f.id === 'system_project2025' || f.label === 'Projet 2025'
+        );
+        
+        if (projet2025) {
+          // Chercher le sous-dossier "Soumissions"
+          const soumissionsFolder = Object.values(folders).find(f => 
+            f.parentId === projet2025.id && f.label === 'Soumissions'
+          );
+          
+          if (soumissionsFolder) {
+            targetFolderId = soumissionsFolder.id;
+          }
+        }
+        
         const result = await updateSubmissionStatus(
           selectedSubmission.id, 
           'completed', 
-          { calculs: calculationData.results }
+          { 
+            calculs: calculationData.results,
+            folderId: targetFolderId || 'projet_2025_soumissions'
+          }
         )
         
         if (result.success) {
-          showSuccess('Calcul terminé !', 'Déplacé vers Soumissions Terminées')
+          showSuccess('Calcul terminé !', 'Déplacé vers Projet 2025 > Soumissions')
           setActiveView('dashboard')
-          setSelectedFolder('system_completed')
+          setSelectedFolder(targetFolderId || 'projet_2025_soumissions')
           setSelectedSubmission(null)
         } else {
           showError('Erreur sauvegarde', result.error)
@@ -537,53 +593,60 @@ function App() {
           </div>
         )}
 
-        {submission.photos && submission.photos.length > 0 && (
-          <div className="mb-3">
-            <p className="text-xs font-medium text-gray-700 mb-2">Photos ({submission.photos.length}):</p>
-            <div className="flex gap-2">
-              {submission.photos.slice(0, 3).map((photo, index) => {
-                const photoUrl = typeof photo === 'string' ? photo : photo.uri || photo.url;
-                const isLocalFile = photoUrl && photoUrl.startsWith('file://');
-                
-                if (isLocalFile) {
-                  return (
-                    <div key={index} className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center border border-gray-300">
-                      <div className="text-center">
-                        <span className="text-xs text-gray-500">📷</span>
-                        <span className="text-xs text-gray-400 block">Local</span>
-                      </div>
-                    </div>
-                  );
-                }
-                
-                if (!photoUrl || photoUrl === 'undefined') {
-                  return (
-                    <div key={index} className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center">
-                      <span className="text-xs text-gray-500">❌</span>
-                    </div>
-                  );
-                }
-                
-                return (
-                  <div key={index} className="relative group">
-                    <img 
-                      src={photoUrl} 
-                      alt={`Photo ${index + 1}`}
-                      className="w-16 h-16 object-cover rounded border border-gray-200 cursor-pointer hover:border-blue-400"
-                      onClick={() => window.open(photoUrl, '_blank')}
-                    />
-                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 rounded transition-opacity" />
-                  </div>
-                );
-              })}
-              {submission.photos.length > 3 && (
-                <div className="w-16 h-16 bg-gray-100 rounded flex items-center justify-center text-sm font-medium text-gray-600 border border-gray-200">
-                  +{submission.photos.length - 3}
-                </div>
-              )}
+     
+{submission.photos && submission.photos.length > 0 && (
+  <div className="mb-3">
+    <p className="text-xs font-medium text-gray-700 mb-3">
+      Photos ({submission.photos.length})
+    </p>
+    <div className="flex gap-2">
+      {submission.photos.slice(0, 3).map((photo, index) => {
+        const photoUrl = typeof photo === 'string' ? photo : photo.uri || photo.url;
+        const isLocalFile = photoUrl && photoUrl.startsWith('file://');
+        
+        if (isLocalFile) {
+          return (
+            <div key={index} className="w-20 h-20 bg-gray-200 rounded flex items-center justify-center border border-gray-300">
+              <div className="text-center">
+                <span className="text-xs text-gray-500">📷</span>
+                <span className="text-xs text-gray-400 block">Local</span>
+              </div>
             </div>
+          );
+        }
+        
+        if (!photoUrl || photoUrl === 'undefined') {
+          return (
+            <div key={index} className="w-20 h-20 bg-gray-200 rounded flex items-center justify-center">
+              <span className="text-xs text-gray-500">❌</span>
+            </div>
+          );
+        }
+        
+        return (
+          <div key={index} className="relative group">
+            <img 
+              src={photoUrl} 
+              alt={`Photo ${index + 1}`}
+              className="w-20 h-20 object-cover rounded cursor-pointer ultra-sharp-thumbnail hover:scale-105 transition-transform duration-200"
+              onClick={() => window.open(photoUrl, '_blank')}
+              loading="lazy"
+              decoding="sync"
+            />
+            {/* ✅ Overlay subtil seulement au hover */}
+            <div className="absolute inset-0 bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 rounded" />
           </div>
-        )}
+        );
+      })}
+      
+      {submission.photos.length > 3 && (
+        <div className="w-20 h-20 bg-gray-100 rounded flex items-center justify-center text-sm font-medium text-gray-600 border border-gray-200">
+          +{submission.photos.length - 3}
+        </div>
+      )}
+    </div>
+  </div>
+)}
 
         <div className="flex space-x-2">
           <button 
@@ -665,8 +728,7 @@ function App() {
             
             {/* Menu contextuel seulement pour les dossiers non-système */}
             {folder.id !== 'system_assignments' && 
-             folder.id !== 'system_pending' && 
-             folder.id !== 'system_completed' && (
+             folder.id !== 'system_pending' && (
               <button
                 onClick={handleMenuClick}
                 className="p-1 opacity-0 group-hover:opacity-100 hover:bg-gray-200 rounded"
@@ -712,7 +774,7 @@ function App() {
           </div>
           <div>
             <h1 className="font-bold text-gray-900">Soumission Toiture</h1>
-            <p className="text-xs text-gray-500">Desktop v2</p>
+            <p className="text-xs text-gray-500">Toitpro</p>
           </div>
         </div>
         
@@ -847,7 +909,7 @@ function App() {
                   className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-lg"
                 >
                   <Plus className="w-4 h-4 mr-2" />
-                  Créer un assignment
+                  Créer une nouvelle soumission
                 </button>
               )}
             </div>
@@ -874,7 +936,7 @@ function App() {
               </button>
               <div className="w-px h-6 bg-gray-300" />
               <div>
-                <h1 className="text-xl font-bold text-gray-900">Calculateur FastNstick 2025</h1>
+                <h1 className="text-xl font-bold text-gray-900">Calculateur Soumission</h1>
                 {selectedSubmission && (
                   <p className="text-sm text-gray-600 mt-0.5">
                     Calcul pour: {selectedSubmission.client?.adresse || selectedSubmission.displayName}
@@ -887,6 +949,10 @@ function App() {
               <span className="text-sm text-gray-600">
                 {firebaseConnected ? 'Synchronisé' : 'Hors ligne'}
               </span>
+              <div className="w-px h-4 bg-gray-300" />
+              <span className="text-xs text-gray-500">
+                Brouillon automatique activé
+              </span>
             </div>
           </div>
         </div>
@@ -897,6 +963,7 @@ function App() {
             <CalculatorView 
               prefilledData={selectedSubmission?.prefilledData}
               onSaveCalculation={handleSaveCalculation}
+              onBack={handleBackFromCalculator}
             />
           </div>
         </div>
@@ -913,9 +980,8 @@ function App() {
             setCurrentView('dashboard');
             setSelectedSubmission(null);
           }}
-          onUpdate={(updatedSubmission) => {
-            console.log('Submission mise à jour:', updatedSubmission);
-          }}
+          
+         onUpdate={handleUpdateSubmissionNotes}
         />
       ) : (
         <div className="flex h-screen bg-white">

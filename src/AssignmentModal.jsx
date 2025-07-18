@@ -1,5 +1,5 @@
 // AssignmentModal.jsx - Modal Assignment pour Desktop
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import { X, User, MapPin, Phone, Mail, FileText } from 'lucide-react'
 
 const AssignmentModal = ({ isOpen, onClose, onSubmit }) => {
@@ -12,6 +12,7 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit }) => {
   })
 
   const [errors, setErrors] = useState({})
+  const phoneInputRef = useRef(null) // ✅ AJOUT: Référence pour le champ téléphone
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -38,18 +39,74 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit }) => {
     }
   }
 
-  const handlePhoneChange = (value) => {
-    const cleaned = value.replace(/\D/g, '')
-    const limited = cleaned.slice(0, 10)
+  // ✅ CORRECTION: Fonction handlePhoneChange améliorée
+  const handlePhoneChange = (e) => {
+    const newValue = e.target.value
+    const oldValue = formData.telephone
     
-    if (limited.length >= 6) {
-      const formatted = `${limited.slice(0, 3)}-${limited.slice(3, 6)}-${limited.slice(6)}`
-      handleInputChange('telephone', formatted)
-    } else if (limited.length >= 3) {
-      const formatted = `${limited.slice(0, 3)}-${limited.slice(3)}`
-      handleInputChange('telephone', formatted)
-    } else {
-      handleInputChange('telephone', limited)
+    // Détecter si on supprime (nouvelle valeur plus courte)
+    const isDeleting = newValue.length < oldValue.length
+    
+    // Si on supprime et qu'on essaie de supprimer un tiret, 
+    // supprimer aussi le chiffre avant
+    if (isDeleting && oldValue.charAt(newValue.length) === '-') {
+      const withoutDash = newValue.slice(0, -1)
+      const cleaned = withoutDash.replace(/\D/g, '').slice(0, 10)
+      handleInputChange('telephone', formatPhoneDisplay(cleaned, true))
+      return
+    }
+    
+    const cleaned = newValue.replace(/\D/g, '').slice(0, 10)
+    handleInputChange('telephone', formatPhoneDisplay(cleaned, isDeleting))
+  }
+
+  // ✅ AJOUT: Fonction helper pour formatage
+  const formatPhoneDisplay = (cleaned, isDeleting = false) => {
+    // Si on est en train de supprimer et qu'on a moins de caractères, 
+    // être plus permissif avec le formatage
+    if (isDeleting && cleaned.length <= 6) {
+      if (cleaned.length >= 3) {
+        return `${cleaned.slice(0, 3)}-${cleaned.slice(3)}`
+      }
+      return cleaned
+    }
+    
+    // Formatage normal
+    if (cleaned.length >= 6) {
+      return `${cleaned.slice(0, 3)}-${cleaned.slice(3, 6)}-${cleaned.slice(6)}`
+    } else if (cleaned.length >= 3) {
+      return `${cleaned.slice(0, 3)}-${cleaned.slice(3)}`
+    }
+    return cleaned
+  }
+
+  // ✅ AJOUT: Gestion des touches spéciales
+  const handlePhoneKeyDown = (e) => {
+    // Permettre les touches de navigation et suppression
+    const allowedKeys = [
+      'Backspace', 'Delete', 'Tab', 'Escape', 'Enter',
+      'Home', 'End', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'
+    ]
+    
+    if (allowedKeys.includes(e.key)) {
+      return
+    }
+    
+    // Permettre Ctrl+A, Ctrl+C, Ctrl+V, etc.
+    if (e.ctrlKey || e.metaKey) {
+      return
+    }
+    
+    // Permettre seulement les chiffres
+    if (!/^[0-9]$/.test(e.key)) {
+      e.preventDefault()
+    }
+  }
+
+  // ✅ AJOUT: Double-clic pour sélectionner tout
+  const handlePhoneDoubleClick = () => {
+    if (phoneInputRef.current) {
+      phoneInputRef.current.select()
     }
   }
 
@@ -127,20 +184,28 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit }) => {
                 />
               </div>
 
-              {/* Téléphone */}
+              {/* Téléphone - ✅ MODIFIÉ avec les nouvelles fonctions */}
               <div>
                 <label className="flex items-center text-sm font-medium text-gray-700 mb-2">
                   <Phone className="w-4 h-4 mr-2 text-gray-500" />
                   Téléphone
                 </label>
                 <input
+                  ref={phoneInputRef}
                   type="text"
                   value={formData.telephone}
-                  onChange={(e) => handlePhoneChange(e.target.value)}
+                  onChange={handlePhoneChange}
+                  onKeyDown={handlePhoneKeyDown}
+                  onDoubleClick={handlePhoneDoubleClick}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="514-783-2794"
                   maxLength={12}
+                  title="Double-cliquez pour sélectionner tout le numéro"
                 />
+                {/* ✅ AJOUT: Petit hint discret */}
+                <p className="text-xs text-gray-400 mt-1">
+                  💡 Double-cliquez pour sélectionner tout
+                </p>
               </div>
             </div>
 
@@ -197,8 +262,6 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit }) => {
                 Ces notes seront visibles sur l'app mobile pour guider l'équipe
               </p>
             </div>
-
-          
 
             {/* Boutons */}
             <div className="flex space-x-4 pt-4">

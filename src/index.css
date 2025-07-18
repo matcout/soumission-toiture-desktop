@@ -48,3 +48,88 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* ✅ NOUVEAU : Optimisations pour les images haute qualité */
+.high-quality-image {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: -o-crisp-edges;
+  image-rendering: crisp-edges;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ✅ NOUVEAU : Optimisations spécifiques pour les miniatures */
+.thumbnail-image {
+  image-rendering: high-quality;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  min-width: 0;
+  min-height: 0;
+  object-fit: cover;
+  object-position: center;
+}
+
+/* ✅ NOUVEAU : Optimisations pour toutes les images */
+img {
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: -o-crisp-edges;
+  image-rendering: crisp-edges;
+  max-width: 100%;
+  height: auto;
+}
+
+/* ✅ NOUVEAU : Optimisations pour les images Firebase */
+img[src*="firebasestorage.googleapis.com"] {
+  image-rendering: high-quality;
+  image-rendering: -webkit-optimize-contrast;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+}
+
+/* ✅ NOUVEAU : Amélioration des transitions d'images */
+.image-transition {
+  transition: all 0.3s ease;
+  will-change: transform;
+}
+
+.image-transition:hover {
+  transform: scale(1.02);
+}
+
+/* ✅ NOUVEAU : Styles pour le loading des images */
+.image-loading {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: loading 1.5s infinite;
+}
+
+@keyframes loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* ✅ NOUVEAU : Optimisations pour les cartes avec photos */
+.photo-card {
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+}
+
+.photo-card img {
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+}
+
