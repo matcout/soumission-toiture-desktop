@@ -116,7 +116,7 @@ function App() {
   const [showAssignmentModal, setShowAssignmentModal] = useState(false)
   const [deleteModal, setDeleteModal] = useState({ show: false, submission: null })
   const [folderModal, setFolderModal] = useState({ show: false, folder: null, parentFolder: null })
-  const [expandedFolders, setExpandedFolders] = useState([])
+  const [expandedFolders, setExpandedFolders] = useState(['system_project2025']) // Projet 2025 ouvert par défaut
   const [moveModal, setMoveModal] = useState({ show: false, submission: null })
   
   const { notifications, removeNotification, showSuccess, showError } = useNotifications()
@@ -241,10 +241,7 @@ function App() {
                   filter: folder.filterConfig 
                     ? (submissions) => applyFolderFilter(folder, submissions)
                     : (submissions) => {
-                        // Pour les dossiers personnalisés, filtrer par folderId
-                        if (folder.id === 'projet_2025_soumissions') {
-                          return submissions.filter(s => s.folderId === 'projet_2025_soumissions' || s.status === 'completed')
-                        }
+                        // Pour les dossiers personnalisés, filtrer UNIQUEMENT par folderId
                         return submissions.filter(s => s.folderId === folder.id)
                       }
                 }
@@ -493,7 +490,9 @@ const handleCalculateSubmission = (submission) => {
           'completed', 
           { 
             calculs: calculationData.results,
-            folderId: targetFolderId || 'projet_2025_soumissions'
+            folderId: targetFolderId || 'projet_2025_soumissions',
+            // Retirer l'ancien folderId pour éviter les doublons
+            previousFolderId: selectedSubmission.folderId
           }
         )
         
@@ -713,24 +712,27 @@ const handleCalculateSubmission = (submission) => {
     const [expanded, setExpanded] = useState(false)
     const hasChildren = folder.children && folder.children.length > 0
     const isCurrentFolder = folder.id === currentFolderId
+    const isParentFolder = level === 0 && hasChildren
     const Icon = ICON_COMPONENTS[folder.icon] || Folder
     
     return (
       <div>
         <div 
           className={`flex items-center justify-between py-2 px-2 rounded hover:bg-gray-50 cursor-pointer ${
-            isCurrentFolder ? 'bg-gray-100 opacity-50 cursor-not-allowed' : ''
+            isCurrentFolder ? 'bg-gray-100 opacity-50 cursor-not-allowed' : 
+            isParentFolder ? 'opacity-60' : ''
           }`}
           style={{ paddingLeft: `${8 + level * 16}px` }}
         >
           <button
-            onClick={() => !isCurrentFolder && onSelect(folder.id)}
+            onClick={() => !isCurrentFolder && !isParentFolder && onSelect(folder.id)}
             className="flex-1 flex items-center text-left"
-            disabled={isCurrentFolder}
+            disabled={isCurrentFolder || isParentFolder}
           >
             <Icon className="w-4 h-4 mr-2" style={{ color: folder.color }} />
             <span className="text-sm">{folder.label}</span>
             {isCurrentFolder && <span className="text-xs text-gray-500 ml-2">(dossier actuel)</span>}
+            {isParentFolder && <span className="text-xs text-gray-500 ml-2">(conteneur)</span>}
           </button>
           
           {hasChildren && (
@@ -770,6 +772,7 @@ const handleCalculateSubmission = (submission) => {
     const isSelected = selectedFolder === folder.id
     const hasChildren = folder.children && folder.children.length > 0
     const isExpanded = expandedFolders.includes(folder.id)
+    const isParentFolder = level === 0 && hasChildren // Dossier parent avec enfants
     
     // NOUVELLE FONCTION: Gérer menu avec préservation scroll
     const handleMenuClick = useCallback((e) => {
@@ -788,7 +791,7 @@ const handleCalculateSubmission = (submission) => {
         <div
           data-folder-id={folder.id}
           className={`group flex items-center justify-between py-2.5 px-3 text-sm rounded-lg ${
-            isSelected
+            isSelected && !isParentFolder
               ? 'bg-blue-50 text-blue-700 font-medium'
               : 'text-gray-700 hover:bg-gray-100'
           }`}
@@ -796,8 +799,18 @@ const handleCalculateSubmission = (submission) => {
         >
           <button
             onClick={() => {
-              setSelectedFolder(folder.id)
-              setActiveView('dashboard')
+              // Si c'est un dossier parent, toggle l'expansion au lieu de sélectionner
+              if (isParentFolder) {
+                setExpandedFolders(prev =>
+                  prev.includes(folder.id)
+                    ? prev.filter(id => id !== folder.id)
+                    : [...prev, folder.id]
+                )
+              } else {
+                // Seulement les sous-dossiers ou dossiers sans enfants peuvent être sélectionnés
+                setSelectedFolder(folder.id)
+                setActiveView('dashboard')
+              }
             }}
             className="flex-1 flex items-center text-left"
           >
@@ -806,15 +819,16 @@ const handleCalculateSubmission = (submission) => {
           </button>
           
           <div className="flex items-center space-x-1">
-            {count > 0 && (
+            {count > 0 && !isParentFolder && (
               <span className="px-2 py-1 text-xs font-medium bg-gray-100 rounded-full">
                 {count}
               </span>
             )}
             
-            {/* Menu contextuel seulement pour les dossiers non-système */}
+            {/* Menu contextuel seulement pour les dossiers non-système et non-parents */}
             {folder.id !== 'system_assignments' && 
-             folder.id !== 'system_pending' && (
+             folder.id !== 'system_pending' && 
+             !isParentFolder && (
               <button
                 onClick={handleMenuClick}
                 className="p-1 opacity-0 group-hover:opacity-100 hover:bg-gray-200 rounded"
@@ -958,6 +972,54 @@ const handleCalculateSubmission = (submission) => {
     }
 
     const currentFolder = folders[selectedFolder]
+    const hasChildren = currentFolder?.children && currentFolder.children.length > 0
+    const isParentFolder = currentFolder && hasChildren
+    
+    // Si c'est un dossier parent, afficher un message spécial
+    if (isParentFolder) {
+      return (
+        <div className="flex-1 p-6 overflow-y-auto">
+          <div className="max-w-7xl mx-auto">
+            <div className="mb-6">
+              <h1 className="text-2xl font-bold text-gray-900 flex items-center">
+                {React.createElement(ICON_COMPONENTS[currentFolder?.icon] || Folder, {
+                  className: "w-6 h-6 mr-3",
+                  style: { color: currentFolder?.color }
+                })}
+                {currentFolder?.label}
+              </h1>
+              <p className="text-gray-600 text-sm mt-1">
+                Dossier d'organisation • {currentFolder.children.length} sous-dossier{currentFolder.children.length !== 1 ? 's' : ''}
+              </p>
+            </div>
+
+            <div className="bg-gray-50 rounded-xl border-2 border-dashed border-gray-300 p-12 text-center">
+              <Folder className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-xl font-medium text-gray-700 mb-3">
+                Ce dossier sert à organiser vos sous-dossiers
+              </h3>
+              <p className="text-gray-600 max-w-md mx-auto">
+                Les soumissions doivent être placées dans les sous-dossiers. 
+                Cliquez sur un sous-dossier dans la barre latérale pour voir son contenu.
+              </p>
+              
+              <div className="mt-8">
+                <button
+                  onClick={() => {
+                    setFolderModal({ show: true, folder: null, parentFolder: currentFolder })
+                  }}
+                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-lg"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Créer un sous-dossier
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+    
     const currentSubmissions = currentFolder?.filter 
       ? currentFolder.filter(submissions)
       : []
