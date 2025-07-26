@@ -230,45 +230,130 @@ function App() {
           const folderResult = await initializeCentralizedFolders('desktop')
           console.log('📁 Dossiers initialisés:', folderResult)
           
-          unsubscribeFolders = subscribeToFolders((result) => {
-            if (result.success) {
-              const foldersMap = {}
-              result.data.forEach(folder => {
-                const desktopIcon = convertIconMobileToDesktop(folder.icon)
-                foldersMap[folder.id] = {
-                  ...folder,
-                  icon: desktopIcon,
-                  filter: folder.filterConfig 
-                    ? (submissions) => applyFolderFilter(folder, submissions)
-                    : (submissions) => {
-                        // Pour les dossiers personnalisés, filtrer UNIQUEMENT par folderId
-                        return submissions.filter(s => s.folderId === folder.id)
-                      }
-                }
-              })
-              
-              if (isUpdatingFolders) {
-                setPendingFolderUpdate(foldersMap)
-              } else {
-                // Préserver scroll lors de mise à jour normale
-                preserveScrollPosition()
-                setFolders(foldersMap)
-                restoreScrollPosition()
-              }
-              
-              console.log(`✅ ${result.data.length} dossiers synchronisés`)
-            }
-          })
+        // 🔧 SECTION COMPLÈTE À REMPLACER dans App.jsx
+// Trouvez cette partie et remplacez TOUT le bloc unsubscribeFolders
+
+unsubscribeFolders = subscribeToFolders((result) => {
+  if (result.success) {
+    const foldersMap = {}
+    result.data.forEach(folder => {
+      const desktopIcon = convertIconMobileToDesktop(folder.icon)
+      
+// 🎯 CRÉER LE FILTRE CORRECT SELON LE DOSSIER
+let filterFunction;
+
+if (folder.label === 'À compléter' || folder.slug === 'pending' || folder.id.includes('pending')) {
+  filterFunction = (submissions) => {
+    const filtered = submissions.filter(s => s.status === 'captured');
+    console.log(`🔍 Filtre "À compléter": ${filtered.length}/${submissions.length} soumissions`);
+    return filtered;
+  };
+} else if (folder.label === 'Aller prendre mesure' || folder.slug === 'assignments') {
+  filterFunction = (submissions) => {
+    const filtered = submissions.filter(s => s.status === 'assignment');
+    console.log(`🔍 Filtre "Assignments": ${filtered.length}/${submissions.length} soumissions`);
+    return filtered;
+  };
+} else if (folder.label === 'Soumissions' || folder.slug === 'completed') {
+  filterFunction = (submissions) => {
+    const filtered = submissions.filter(s => s.status === 'completed');
+    console.log(`🔍 Filtre "Soumissions": ${filtered.length}/${submissions.length} soumissions`);
+    return filtered;
+  };
+} else if (folder.filterConfig) {
+  filterFunction = (submissions) => applyFolderFilter(folder, submissions);
+} else {
+  // 🎯 POUR LES DOSSIERS PERSONNALISÉS - GESTION MULTIPLE IDs
+  filterFunction = (submissions) => {
+    const filtered = submissions.filter(s => {
+      // Correspondances multiples pour compatibilité
+      if (s.folderId === folder.id) return true;
+      
+      // Gestion spéciale pour "Projet 2025"
+      if (folder.id === 'projet_2025' && s.folderId === 'projet_2025_soumissions') return true;
+      
+      // Gestion spéciale pour "Soumissions" 
+// Gestion spéciale pour "Soumissions" 
+if (folder.label === 'Soumissions' && 
+    (s.folderId === 'completed' || s.folderId === 'projet_2025_soumissions' || s.status === 'completed')) return true;
+      
+      return false;
+    });
+    
+    console.log(`🔍 Filtre "${folder.label}": ${filtered.length}/${submissions.length} soumissions (cherche: ${folder.id})`);
+    return filtered;
+  };
+}
+      
+      foldersMap[folder.id] = {
+        ...folder,
+        icon: desktopIcon,
+        filter: filterFunction
+      }
+    })
+    
+    if (isUpdatingFolders) {
+      setPendingFolderUpdate(foldersMap)
+    } else {
+      // Préserver scroll lors de mise à jour normale
+      preserveScrollPosition()
+      setFolders(foldersMap)
+      restoreScrollPosition()
+    }
+    
+    console.log(`✅ ${result.data.length} dossiers synchronisés`)
+  }
+})
           
-          unsubscribeSubmissions = subscribeToSubmissions((result) => {
-            if (result.success) {
-              setSubmissions(result.data)
-              console.log(`✅ ${result.count} soumissions chargées`)
-            } else {
-              console.error('❌ Erreur sync:', result.error)
-              showError('Erreur synchronisation', result.error)
-            }
-          })
+       unsubscribeSubmissions = subscribeToSubmissions((result) => {
+  if (result.success) {
+    setSubmissions(result.data)
+    console.log(`✅ ${result.count} soumissions chargées`)
+    
+    // 🔧 DEBUG TEMPORAIRE - AJOUTER CES LIGNES
+    window.debugSubmissions = result.data;
+    
+    console.log('🔍 DIAGNOSTIC DÉTAILLÉ');
+    console.log('===================');
+    console.log(`📊 Total: ${result.data.length}`);
+    
+    const statusCount = {};
+    result.data.forEach(s => {
+      statusCount[s.status] = (statusCount[s.status] || 0) + 1;
+    });
+    console.log('📈 Par status:', statusCount);
+    
+    const captured = result.data.filter(s => s.status === 'captured');
+    console.log(`🎯 ${captured.length} soumissions "captured"`);
+captured.forEach((s, i) => {
+  console.log(`   ${i+1}. ${s.client?.adresse || s.id} (Status: ${s.status})`);
+});
+
+console.log('🔍 ANALYSE DES folderId :');
+result.data.forEach((s, i) => {
+  console.log(`   ${i+1}. ${s.client?.adresse || s.id} - folderId: "${s.folderId || 'AUCUN'}" - status: ${s.status}`);
+});
+
+console.log('🔍 ANALYSE DES DOSSIERS :');
+Object.values(folders).forEach(f => {
+  console.log(`   📁 ${f.label} (ID: ${f.id}) - Parent: ${f.parentId || 'AUCUN'}`);
+});
+    
+    // Test du filtre "À compléter"
+    const pendingFolder = Object.values(folders).find(f => 
+      f.label === 'À compléter' || f.id.includes('pending')
+    );
+    if (pendingFolder && pendingFolder.filter) {
+      const filtered = pendingFolder.filter(result.data);
+      console.log(`🔍 Filtre "À compléter": ${filtered.length} résultats`);
+    } else {
+      console.log('❌ Dossier "À compléter" non trouvé ou sans filtre');
+    }
+  } else {
+    console.error('❌ Erreur sync:', result.error)
+    showError('Erreur synchronisation', result.error)
+  }
+})
         } else {
           showError('Firebase déconnecté', 'Mode hors ligne')
         }
@@ -798,20 +883,25 @@ const handleCalculateSubmission = (submission) => {
           style={{ paddingLeft: `${12 + level * 16}px` }}
         >
           <button
-            onClick={() => {
-              // Si c'est un dossier parent, toggle l'expansion au lieu de sélectionner
-              if (isParentFolder) {
-                setExpandedFolders(prev =>
-                  prev.includes(folder.id)
-                    ? prev.filter(id => id !== folder.id)
-                    : [...prev, folder.id]
-                )
-              } else {
-                // Seulement les sous-dossiers ou dossiers sans enfants peuvent être sélectionnés
-                setSelectedFolder(folder.id)
-                setActiveView('dashboard')
-              }
-            }}
+onClick={() => {
+  console.log('🎯 CLIC DÉTECTÉ sur:', folder.label, '| ID:', folder.id, '| isParentFolder:', isParentFolder);
+  
+  // Toujours permettre la sélection
+  setSelectedFolder(folder.id)
+  setActiveView('dashboard')
+  
+  console.log('🎯 setSelectedFolder appelé avec:', folder.id);
+
+  // Si c'est un dossier parent, toggle aussi l'expansion
+  if (isParentFolder) {
+    console.log('🎯 Toggle expansion pour parent folder');
+    setExpandedFolders(prev =>
+      prev.includes(folder.id)
+        ? prev.filter(id => id !== folder.id)
+        : [...prev, folder.id]
+    )
+  }
+}}
             className="flex-1 flex items-center text-left"
           >
             <Icon className="w-4 h-4 mr-3 flex-shrink-0" style={{ color: folder.color }} />
@@ -960,6 +1050,8 @@ const handleCalculateSubmission = (submission) => {
   )
 
   const MainContent = () => {
+
+    
     if (loading) {
       return (
         <div className="flex-1 flex items-center justify-center">
@@ -1020,9 +1112,33 @@ const handleCalculateSubmission = (submission) => {
       )
     }
     
-    const currentSubmissions = currentFolder?.filter 
-      ? currentFolder.filter(submissions)
-      : []
+   const currentSubmissions = useMemo(() => {
+  console.log('🔍 useMemo currentSubmissions calculé', {
+    selectedFolder,
+    folderExists: !!folders[selectedFolder],
+    submissionsCount: submissions.length
+  });
+  
+  if (!selectedFolder || !folders[selectedFolder]) return []
+  const folder = folders[selectedFolder]
+  if (!folder.filter || !Array.isArray(submissions)) return []
+  
+  const filtered = folder.filter(submissions)
+  console.log(`🔍 ${folder.label}: ${filtered.length} soumissions filtrées FOR DISPLAY`)
+  return filtered
+}, [selectedFolder, folders, submissions])
+console.log('🎯 MainContent rendu:', {
+  selectedFolder,
+  currentSubmissions: currentSubmissions.length,
+  folders: Object.keys(folders).length
+});
+
+// Exposer pour tests
+window.debugMainContent = {
+  selectedFolder,
+  currentSubmissions,
+  folders
+};
 
     return (
       <div className="flex-1 p-6 overflow-y-auto">
