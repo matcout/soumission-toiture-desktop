@@ -415,38 +415,27 @@ if (folder.label === 'À compléter' || folder.slug === 'pending' || folder.id.i
     console.log(`🔍 Filtre "Assignments": ${filtered.length}/${submissions.length} soumissions`);
     return filtered;
   };
-
 } else if (folder.filterConfig) {
   filterFunction = (submissions) => applyFolderFilter(folder, submissions);
 } else {
-
-// 🎯 POUR LES DOSSIERS PERSONNALISÉS - GESTION MULTIPLE IDs
-filterFunction = (submissions) => {
-  // ✅ LOGIQUE UNIVERSELLE pour dossiers conteneurs (Projet XXXX)
+  // 🔧 LOGIQUE UNIVERSELLE pour dossiers "Projet XXXX"
   const isProjectContainer = folder.label?.match(/^Projet \d{4}$/i) || 
-                           folder.id?.includes('project') ||
-                           folder.id === 'projet_2025' || 
-                           folder.id === 'system_project2025';
+                           folder.id?.includes('project');
   
   if (isProjectContainer) {
-    console.log(`🔍 Filtre "${folder.label}": 0 soumissions (conteneur projet)`);
-    return [];
+    // Les dossiers "Projet XXXX" sont des conteneurs, ils ne contiennent pas directement de soumissions
+    filterFunction = (submissions) => {
+      console.log(`🔍 Filtre "${folder.label}": 0 soumissions (conteneur projet)`);
+      return [];
+    };
+  } else {
+    // Pour tous les autres dossiers (y compris sous-dossiers)
+    filterFunction = (submissions) => {
+      const filtered = submissions.filter(s => s.folderId === folder.id);
+      console.log(`🔍 Filtre "${folder.label}": ${filtered.length}/${submissions.length} soumissions`);
+      return filtered;
+    };
   }
-  
-  // ✅ SPÉCIAL : Sous-dossier "Soumissions" récupère toutes les soumissions terminées
-if (folder.label === 'Soumissions' && folder.parentId) {
-  const filtered = submissions.filter(s => 
-    s.status === 'completed' && s.folderId === folder.id  // ✅ CORRECTION: && au lieu de ||
-  );
-  console.log(`🔍 Filtre "${folder.label}": ${filtered.length}/${submissions.length} soumissions (completed ET folderId)`);
-  return filtered;
-}
-  
-  // ✅ FILTRAGE STANDARD pour tous les autres dossiers
-  const filtered = submissions.filter(s => s.folderId === folder.id);
-  console.log(`🔍 Filtre "${folder.label}": ${filtered.length}/${submissions.length} soumissions (folderId: ${folder.id})`);
-  return filtered;
-};
 }
       
       foldersMap[folder.id] = {
@@ -1000,23 +989,32 @@ const handleCalculateSubmission = (submission) => {
     )
   }
 
-  const getFolderCount = (folder) => {
+const getFolderCount = (folder) => {
   if (!submissions || !Array.isArray(submissions)) return 0;
   
-  // 🔧 CAS SPÉCIAUX : dossiers "Soumissions"
- if (folder.id === 'projet_2025_soumissions') {
-    const count = submissions.filter(s => s.folderId === 'projet_2025_soumissions').length;
-    console.log(`📊 Count projet_2025_soumissions: ${count}`);
-    return count;
+  // 🔧 LOGIQUE UNIVERSELLE : Tous les sous-dossiers de "Projet XXXX"
+  if (folder.parentId && folders[folder.parentId]) {
+    const parentFolder = folders[folder.parentId];
     
-  } else if (folder.filter) {
-    // Dossiers avec filtres normaux
+    // Si le parent est un dossier "Projet XXXX"
+    const isProjectFolder = parentFolder.label?.match(/^Projet \d{4}$/i) || 
+                           parentFolder.id?.includes('project');
+    
+    if (isProjectFolder) {
+      // Compter les soumissions par folderId exact
+      const count = submissions.filter(s => s.folderId === folder.id).length;
+      console.log(`📊 Count ${folder.label} (sous-dossier de ${parentFolder.label}): ${count}`);
+      return count;
+    }
+  }
+  
+  // Logique standard pour les autres dossiers
+  if (folder.filter) {
     const count = folder.filter(submissions).length;
     console.log(`📊 Count ${folder.label}: ${count}`);
     return count;
     
   } else {
-    // Dossiers personnalisés - compter par folderId
     const count = submissions.filter(s => s.folderId === folder.id).length;
     console.log(`📊 Count folderId ${folder.id}: ${count}`);
     return count;
@@ -1383,7 +1381,7 @@ if (isProjectFolder) {
       )
     }
     
- const currentSubmissions = useMemo(() => {
+const currentSubmissions = useMemo(() => {
   console.log('🔍 useMemo currentSubmissions calculé', {
     selectedFolder,
     folderExists: !!folders[selectedFolder],
@@ -1394,23 +1392,34 @@ if (isProjectFolder) {
   const folder = folders[selectedFolder]
   if (!Array.isArray(submissions)) return []
   
-  // 🔧 CAS SPÉCIAUX : Les 2 dossiers "Soumissions"
- if (selectedFolder === 'projet_2025_soumissions') {
-    // Dossier "Soumissions" CUSTOM (vert foncé)  
-    const filtered = submissions.filter(s => s.folderId === 'projet_2025_soumissions');
-    console.log(`🔧 Soumissions (projet): ${filtered.length} soumissions`);
+  // 🔧 LOGIQUE UNIVERSELLE : Tous les sous-dossiers de "Projet XXXX"
+  if (folder.parentId && folders[folder.parentId]) {
+    const parentFolder = folders[folder.parentId];
+    
+    // Si le parent est un dossier "Projet XXXX" (2025, 2024, 2023, etc.)
+    const isProjectFolder = parentFolder.label?.match(/^Projet \d{4}$/i) || 
+                           parentFolder.id?.includes('project');
+    
+    if (isProjectFolder) {
+      // Pour TOUS les sous-dossiers de projets
+      // Filtrer par le folderId exact du sous-dossier
+      const filtered = submissions.filter(s => s.folderId === folder.id);
+      console.log(`🔧 ${folder.label} (sous-dossier de ${parentFolder.label}): ${filtered.length} soumissions`);
+      return filtered;
+    }
+  }
+  
+  // 🔧 CAS STANDARD : Dossiers système et personnalisés
+  if (folder.filter) {
+    // Dossiers système avec filtres (À compléter, Aller prendre mesure)
+    const filtered = folder.filter(submissions)
+    console.log(`🔍 ${folder.label}: ${filtered.length} soumissions filtrées`);
     return filtered;
     
-  } else if (folder.filter) {
-    // Dossiers avec filtres normaux
-    const filtered = folder.filter(submissions)
-    console.log(`🔍 ${folder.label}: ${filtered.length} soumissions filtrées FOR DISPLAY`)
-    return filtered
-    
   } else {
-    // Fallback - filtre par folderId direct
+    // Dossiers personnalisés - filtre par folderId direct
     const filtered = submissions.filter(s => s.folderId === selectedFolder);
-    console.log(`🔍 Fallback "${folder.label}": ${filtered.length} soumissions`);
+    console.log(`🔍 ${folder.label}: ${filtered.length} soumissions avec folderId: ${selectedFolder}`);
     return filtered;
   }
 }, [selectedFolder, folders, submissions])

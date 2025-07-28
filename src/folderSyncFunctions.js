@@ -99,12 +99,99 @@ export const convertIconDesktopToMobile = (desktopIcon) => {
 };
 
 // Sauvegarder un dossier
-export const saveFolderToFirebase = async (folderData, platform = 'desktop') => {
+export const saveFolderToFirebase = async (folderData, platform = 'mobile') => {
   try {
-    const customId = `folder_${Date.now()}`;
-    const normalizedIcon = platform === 'desktop' 
-      ? convertIconDesktopToMobile(folderData.icon)
-      : folderData.icon;
+    console.log('💾 Sauvegarde dossier:', folderData.label, 'depuis', platform);
+    
+    // NOUVELLE LOGIQUE D'ID PROPRE
+    let customId;
+    
+    // Pour les dossiers spéciaux, utiliser des IDs prédéfinis
+    const specialFolders = {
+      'Projet 2024': 'projet_2024',
+      'Projet 2025': 'projet_2025', 
+      'Projet 2026': 'projet_2026',
+      'Projet 2023': 'projet_2023',
+      'Projet 2022': 'projet_2022',
+      'Contrats': 'contrats',
+      'Inspections': 'inspections',
+      'Réparations': 'reparations',
+      'Soumissions': 'soumissions',
+      'Terminées': 'terminees',
+      'Réalisés': 'realises',
+      'En cours': 'en_cours',
+      'Annulées': 'annulees'
+    };
+    
+    // Si c'est un dossier spécial, utiliser l'ID prédéfini
+    if (specialFolders[folderData.label]) {
+      customId = specialFolders[folderData.label];
+      
+      // Si c'est un sous-dossier, ajouter le préfixe du parent
+      if (folderData.parentId) {
+        // Nettoyer le parentId pour avoir un préfixe propre
+        const parentPrefix = folderData.parentId.replace(/[_\-]/g, '');
+        customId = `${parentPrefix}_${customId}`;
+      }
+    } else {
+      // Pour les autres dossiers, créer un ID basé sur le label
+      const cleanLabel = folderData.label
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "") // Retirer les accents
+        .replace(/[^a-z0-9\s]/g, '')
+        .replace(/\s+/g, '_')
+        .substring(0, 30);
+      
+      customId = cleanLabel;
+      
+      // Si c'est un sous-dossier, ajouter le préfixe du parent
+      if (folderData.parentId) {
+        const parentPrefix = folderData.parentId.split('_')[0];
+        customId = `${parentPrefix}_${cleanLabel}`;
+      }
+    }
+    
+    // Vérifier si l'ID existe déjà dans Firebase
+    const { getDoc, doc } = await import('firebase/firestore');
+    const folderRef = doc(db, 'folders', customId);
+    const existingDoc = await getDoc(folderRef);
+    
+    if (existingDoc.exists()) {
+      // Trouver un ID unique en ajoutant un numéro
+      let counter = 2;
+      let uniqueId = `${customId}_${counter}`;
+      
+      while (true) {
+        const checkRef = doc(db, 'folders', uniqueId);
+        const checkDoc = await getDoc(checkRef);
+        
+        if (!checkDoc.exists()) {
+          customId = uniqueId;
+          break;
+        }
+        
+        counter++;
+        uniqueId = `${customId}_${counter}`;
+        
+        // Sécurité pour éviter une boucle infinie
+        if (counter > 10) {
+          // Fallback à l'ancien système si trop de conflits
+          customId = `folder_${Date.now()}`;
+          break;
+        }
+      }
+    }
+
+    // ✅ NORMALISER L'ICÔNE SELON LA PLATEFORME
+    let normalizedIcon;
+    if (platform === 'mobile') {
+      // Mobile envoie FontAwesome → Sauvegarder en FontAwesome
+      normalizedIcon = folderData.icon;
+    } else {
+      // Desktop envoie Lucide → Convertir en FontAwesome pour cohérence
+      normalizedIcon = convertIconDesktopToMobile(folderData.icon);
+    }
 
     const dataToSave = {
       ...folderData,
@@ -112,16 +199,26 @@ export const saveFolderToFirebase = async (folderData, platform = 'desktop') => 
       icon: normalizedIcon,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-      platform: platform
+      platform: platform,
+      syncedAt: serverTimestamp()
     };
 
     const docRef = doc(db, 'folders', customId);
     await setDoc(docRef, dataToSave);
     
-    return { success: true, id: customId };
+    console.log('✅ Dossier sauvé avec ID propre:', customId);
+    return {
+      success: true,
+      id: customId,
+      message: `Dossier "${folderData.label}" créé avec succès !`
+    };
+
   } catch (error) {
-    console.error('❌ Erreur sauvegarde dossier:', error);
-    return { success: false, error: error.message };
+    console.error('❌ Erreur sauvegarde dossier Firebase:', error);
+    return {
+      success: false,
+      error: error.message
+    };
   }
 };
 
