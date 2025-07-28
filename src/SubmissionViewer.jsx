@@ -91,7 +91,7 @@ const SubmissionViewer = ({ submission, onBack, onUpdate }) => {
 
   // Calculer superficie totale
   const getSuperficieTotale = () => {
-    return submission.toiture?.superficie?.totale || 0
+    return Math.round(submission.toiture?.superficie?.totale || 0)
   }
 
   // Calculer les quantités de matériaux nécessaires
@@ -181,8 +181,8 @@ const SubmissionViewer = ({ submission, onBack, onUpdate }) => {
               </p>
               {submission.toiture?.superficie && (
                 <>
-                  <p className="text-sm">Toiture: {(submission.toiture.superficie.toiture || 0).toFixed(2)} pi²</p>
-                  <p className="text-sm">Parapets: {(submission.toiture.superficie.parapets || 0).toFixed(2)} pi²</p>
+                  <p className="text-sm">Toiture: {Math.round(submission.toiture.superficie.toiture || 0)} pi²</p>
+                  <p className="text-sm">Parapets: {Math.round(submission.toiture.superficie.parapets || 0)} pi²</p>
                 </>
               )}
               {/* Afficher puits de lumière SEULEMENT si des valeurs sont entrées */}
@@ -293,7 +293,7 @@ const SubmissionViewer = ({ submission, onBack, onUpdate }) => {
               </div>
             </div>
             <p className="text-xs text-gray-600 mt-2 text-center">
-              📐 {submission.toiture?.superficie?.toiture || 0} pi² toiture + {submission.toiture?.superficie?.parapets || 0} pi² parapets
+              📐 {Math.round(submission.toiture.superficie.toiture || 0)} pi² toiture + {Math.round(submission.toiture.superficie.parapets || 0)} pi² parapets
             </p>
             
             {/* Indicateurs importants uniquement si applicable */}

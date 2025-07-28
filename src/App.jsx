@@ -415,40 +415,36 @@ if (folder.label === 'À compléter' || folder.slug === 'pending' || folder.id.i
     console.log(`🔍 Filtre "Assignments": ${filtered.length}/${submissions.length} soumissions`);
     return filtered;
   };
-} else if (folder.label === 'Soumissions' || folder.slug === 'completed') {
-  filterFunction = (submissions) => {
-    const filtered = submissions.filter(s => s.status === 'completed');
-    console.log(`🔍 Filtre "Soumissions": ${filtered.length}/${submissions.length} soumissions`);
-    return filtered;
-  };
+
 } else if (folder.filterConfig) {
   filterFunction = (submissions) => applyFolderFilter(folder, submissions);
 } else {
-  // 🎯 POUR LES DOSSIERS PERSONNALISÉS - GESTION MULTIPLE IDs
+
 // 🎯 POUR LES DOSSIERS PERSONNALISÉS - GESTION MULTIPLE IDs
 filterFunction = (submissions) => {
-  // Gestion spéciale pour "Projet 2025" - CONTENEUR VIDE
-  if (folder.id === 'projet_2025') {
-    const filtered = []; // Toujours vide pour le conteneur
-    console.log(`🔍 Filtre "${folder.label}": ${filtered.length} soumissions (conteneur parent)`);
-    return filtered;
+  // ✅ LOGIQUE UNIVERSELLE pour dossiers conteneurs (Projet XXXX)
+  const isProjectContainer = folder.label?.match(/^Projet \d{4}$/i) || 
+                           folder.id?.includes('project') ||
+                           folder.id === 'projet_2025' || 
+                           folder.id === 'system_project2025';
+  
+  if (isProjectContainer) {
+    console.log(`🔍 Filtre "${folder.label}": 0 soumissions (conteneur projet)`);
+    return [];
   }
   
-  const filtered = submissions.filter(s => {
-    // Correspondances multiples pour compatibilité
-    if (s.folderId === folder.id) return true;
-    
-    // Gestion spéciale pour "Soumissions" 
-// Gestion spéciale pour "Soumissions" - TEMPORAIRE POUR VOIR TOUTES
-if (folder.label === 'Soumissions') {
-  console.log(`🔍 Test soumission pour ${folder.label}:`, s.client?.adresse, 'folderId:', s.folderId);
-  return (s.folderId === 'completed' || s.folderId === 'projet_2025_soumissions' || s.status === 'completed');
+  // ✅ SPÉCIAL : Sous-dossier "Soumissions" récupère toutes les soumissions terminées
+if (folder.label === 'Soumissions' && folder.parentId) {
+  const filtered = submissions.filter(s => 
+    s.status === 'completed' && s.folderId === folder.id  // ✅ CORRECTION: && au lieu de ||
+  );
+  console.log(`🔍 Filtre "${folder.label}": ${filtered.length}/${submissions.length} soumissions (completed ET folderId)`);
+  return filtered;
 }
-    
-    return false;
-  });
   
-  console.log(`🔍 Filtre "${folder.label}": ${filtered.length}/${submissions.length} soumissions (cherche: ${folder.id})`);
+  // ✅ FILTRAGE STANDARD pour tous les autres dossiers
+  const filtered = submissions.filter(s => s.folderId === folder.id);
+  console.log(`🔍 Filtre "${folder.label}": ${filtered.length}/${submissions.length} soumissions (folderId: ${folder.id})`);
   return filtered;
 };
 }
@@ -556,12 +552,16 @@ Object.values(folders).forEach(f => {
   }, [handleMouseMove, handleMouseUp])
 
 useEffect(() => {
-  if (filteredSubmissions.length > 0 && selectedFolder && !selectedSubmission) {
-    setSelectedSubmission(filteredSubmissions[0])
-  } else if (filteredSubmissions.length === 0) {
+  // ✅ TOUJOURS réinitialiser la sélection lors du changement de dossier
+  if (selectedFolder) {
     setSelectedSubmission(null)
   }
-}, [filteredSubmissions, selectedFolder, selectedSubmission])
+  
+  // ✅ Sélectionner automatiquement la première soumission si disponible
+  if (filteredSubmissions.length > 0 && selectedFolder && !selectedSubmission) {
+    setSelectedSubmission(filteredSubmissions[0])
+  }
+}, [filteredSubmissions, selectedFolder])
 
 // 🔥 REMPLACEZ COMPLÈTEMENT ce useEffect par celui-ci :
 
@@ -1003,13 +1003,8 @@ const handleCalculateSubmission = (submission) => {
   const getFolderCount = (folder) => {
   if (!submissions || !Array.isArray(submissions)) return 0;
   
-  // 🔧 CAS SPÉCIAUX : Les 2 dossiers "Soumissions"
-  if (folder.id === 'completed') {
-    const count = submissions.filter(s => s.folderId === 'completed').length;
-    console.log(`📊 Count completed: ${count}`);
-    return count;
-    
-  } else if (folder.id === 'projet_2025_soumissions') {
+  // 🔧 CAS SPÉCIAUX : dossiers "Soumissions"
+ if (folder.id === 'projet_2025_soumissions') {
     const count = submissions.filter(s => s.folderId === 'projet_2025_soumissions').length;
     console.log(`📊 Count projet_2025_soumissions: ${count}`);
     return count;
@@ -1122,23 +1117,56 @@ const handleCalculateSubmission = (submission) => {
 onClick={() => {
   console.log('🎯 CLIC DÉTECTÉ sur:', folder.label, '| ID:', folder.id, '| isParentFolder:', isParentFolder);
   
-  // Toujours permettre la sélection
+  // ✅ RÉINITIALISER la sélection de soumission lors du changement de dossier
+  setSelectedSubmission(null)
   setActiveView('dashboard')
-  setSelectedFolder(folder.id)
   
-  
-  console.log('🎯 setSelectedFolder appelé avec:', folder.id);
+ // ✅ LOGIQUE UNIVERSELLE pour tous les projets (2025, 2024, 2026, etc.)
+const isProjectFolder = folder.label?.match(/^Projet \d{4}$/i) || 
+                       folder.id?.includes('project') ||
+                       folder.id === 'projet_2025' || 
+                       folder.id === 'system_project2025';
 
-  // Si c'est un dossier parent, toggle aussi l'expansion
-  if (isParentFolder) {
-    console.log('🎯 Toggle expansion pour parent folder');
-    setExpandedFolders(prev =>
-      prev.includes(folder.id)
-        ? prev.filter(id => id !== folder.id)
-        : [...prev, folder.id]
-    )
+if (isProjectFolder) {
+  console.log('🎯 Clic sur dossier Projet - Redirection vers Soumissions');
+  
+  // Chercher le sous-dossier "Soumissions" de ce projet
+  const soumissionsFolder = Object.values(folders).find(f => 
+    f.parentId === folder.id && 
+    (f.label === 'Soumissions' || f.label?.toLowerCase().includes('soumission'))
+  );
+  
+  if (soumissionsFolder) {
+    console.log('🎯 Sous-dossier Soumissions trouvé:', soumissionsFolder.id);
+    setSelectedFolder(soumissionsFolder.id);
+  } else {
+    console.log('🎯 Sous-dossier Soumissions non trouvé, sélection normale');
+    setSelectedFolder(folder.id);
   }
+  
+  // Toujours développer le dossier projet
+  setExpandedFolders(prev =>
+    prev.includes(folder.id) ? prev : [...prev, folder.id]
+  );
+  
+} else {
+    // ✅ COMPORTEMENT NORMAL pour les autres dossiers
+    setSelectedFolder(folder.id);
+    
+    // Si c'est un dossier parent, toggle l'expansion
+    if (isParentFolder) {
+      console.log('🎯 Toggle expansion pour parent folder');
+      setExpandedFolders(prev =>
+        prev.includes(folder.id)
+          ? prev.filter(id => id !== folder.id)
+          : [...prev, folder.id]
+      );
+    }
+  }
+  
+  console.log('🎯 setSelectedFolder appelé');
 }}
+
             className="flex-1 flex items-center text-left"
           >
             <Icon className="w-4 h-4 mr-3 flex-shrink-0" style={{ color: folder.color }} />
@@ -1367,13 +1395,7 @@ onClick={() => {
   if (!Array.isArray(submissions)) return []
   
   // 🔧 CAS SPÉCIAUX : Les 2 dossiers "Soumissions"
-  if (selectedFolder === 'completed') {
-    // Dossier "Soumissions" SYSTEM (vert clair)
-    const filtered = submissions.filter(s => s.folderId === 'completed');
-    console.log(`🔧 Soumissions (completed): ${filtered.length} soumissions`);
-    return filtered;
-    
-  } else if (selectedFolder === 'projet_2025_soumissions') {
+ if (selectedFolder === 'projet_2025_soumissions') {
     // Dossier "Soumissions" CUSTOM (vert foncé)  
     const filtered = submissions.filter(s => s.folderId === 'projet_2025_soumissions');
     console.log(`🔧 Soumissions (projet): ${filtered.length} soumissions`);
@@ -1767,7 +1789,9 @@ return (
               </div>
             </div>
           </div>
+          
         ) : (
+          
           // LAYOUT 3 COLONNES NORMAL (vue dashboard par défaut)
           <>
             {/* COLONNE 2: LISTE DES SOUMISSIONS */}
@@ -1917,6 +1941,12 @@ return (
   })}
 </div>
             </div>
+
+                    {/* 🔧 AJOUTER CE SÉPARATEUR ICI - ENTRE les deux colonnes */}
+            <div
+              className="w-1 bg-gray-200 hover:bg-blue-400 cursor-col-resize transition-colors"
+              onMouseDown={(e) => handleMouseDown(e, 'list')}
+            />
 
             {/* Séparateur redimensionnable pour la liste */}
             <div 
@@ -2102,11 +2132,13 @@ return (
       </div>
     ) : (
       // ✅ VUE NORMALE (SubmissionViewer) pour les autres onglets
-     <SubmissionViewer 
-  submission={selectedSubmission} 
-  onBack={() => setSelectedSubmission(null)}
-  onUpdate={handleUpdateSubmissionNotes}
-/>
+<div className="h-full overflow-y-auto">
+  <SubmissionViewer 
+    submission={selectedSubmission} 
+    onBack={() => setSelectedSubmission(null)}
+    onUpdate={handleUpdateSubmissionNotes}
+  />
+</div>
     )
   ) : (
     <div className="flex-1 flex items-center justify-center text-gray-500">
