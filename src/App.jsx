@@ -1,7 +1,7 @@
 // App.jsx - Fix pour préserver le scroll lors d'ouverture du menu contextuel
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import ReactDOM from 'react-dom'
-import { Building2, Calculator, Home, Plus, Folder, Clock, CheckCircle2, FileText, RefreshCw, ChevronRight, Trash2, Eye, MoreVertical, FolderPlus } from 'lucide-react'
+import { Building2, Calculator, Home, Plus, Folder, Clock, CheckCircle2, FileText, RefreshCw, ChevronRight, Trash2, Eye, MoreVertical, FolderPlus, Camera, PanelLeftClose, User, MapPin, ExternalLink, ArrowLeft, Edit3, Save } from 'lucide-react'
 import { subscribeToSubmissions, createAssignment, updateSubmissionStatus, deleteSubmissionFromFirebase, updateSubmissionInFirebase } from './firebaseFunctions'
 import { testFirebaseConnection } from './firebase'
 import { initializeCentralizedFolders, getAllCentralizedFolders, applyFolderFilter } from './centralizedFolderSystem'
@@ -11,6 +11,7 @@ import AssignmentModal from './AssignmentModal'
 import FolderManagementModal from './FolderManagementModal'
 import { useNotifications, NotificationContainer } from './NotificationSystem'
 import SubmissionViewer from './SubmissionViewer'
+import CustomCalendar from './CustomCalendar'
 
 
 // Icônes disponibles avec mapping mobile → desktop
@@ -109,18 +110,36 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [firebaseConnected, setFirebaseConnected] = useState(false)
   
-  const [activeView, setActiveView] = useState('dashboard')
-  const [selectedFolder, setSelectedFolder] = useState('system_assignments')
+ const [activeView, setActiveView] = useState('calendar')
+  const [selectedFolder, setSelectedFolder] = useState(null)
   const [selectedSubmission, setSelectedSubmission] = useState(null)
+
+  const [selectedSubmissionId, setSelectedSubmissionId] = useState(null)
   
   const [showAssignmentModal, setShowAssignmentModal] = useState(false)
   const [deleteModal, setDeleteModal] = useState({ show: false, submission: null })
   const [folderModal, setFolderModal] = useState({ show: false, folder: null, parentFolder: null })
   const [expandedFolders, setExpandedFolders] = useState(['system_project2025']) // Projet 2025 ouvert par défaut
   const [moveModal, setMoveModal] = useState({ show: false, submission: null })
+
+  // NOUVEAUX ÉTATS pour le layout 3 colonnes
+  const [menuWidth, setMenuWidth] = useState(22) // Menu: 22%
+  const [listWidth, setListWidth] = useState(35) // Liste: 35%
+  const [detailWidth, setDetailWidth] = useState(43) // Détails: 43%
+  const [menuCollapsed, setMenuCollapsed] = useState(false)
+
+    const [submissionContextMenu, setSubmissionContextMenu] = useState({ 
+    show: false, 
+    submission: null, 
+    position: { x: 0, y: 0 } 
+  })
   
   const { notifications, removeNotification, showSuccess, showError } = useNotifications()
   const [currentView, setCurrentView] = useState('dashboard')
+
+const [isEditingNotes, setIsEditingNotes] = useState(false)
+const [editedNotes, setEditedNotes] = useState('')
+const [isSavingNotes, setIsSavingNotes] = useState(false)
 
   // État pour le menu contextuel avec position - NOUVELLE GESTION
   const [contextMenu, setContextMenu] = useState({ 
@@ -129,11 +148,70 @@ function App() {
     position: { x: 0, y: 0 } 
   })
 
+  // Composant Menu Contextuel pour Soumissions
+const SubmissionContextMenu = ({ submission, position, onClose, onDelete, onMove }) => {
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (!e.target.closest('.submission-context-menu-portal')) {
+        onClose()
+      }
+    }
+    
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [onClose])
+
+  if (!submission) return null
+
+  const menuContent = (
+    <div 
+      className="submission-context-menu-portal"
+      style={{
+        position: 'fixed',
+        top: position.y,
+        left: position.x,
+        zIndex: 9999
+      }}
+    >
+      <div className="bg-white border rounded-lg shadow-lg py-1 w-48">
+        <button
+          onClick={() => {
+            onMove(submission)
+            onClose()
+          }}
+          className="w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center"
+        >
+          <Folder className="w-4 h-4 mr-2" />
+          Déplacer vers...
+        </button>
+        <button
+          onClick={() => {
+            onDelete(submission)
+            onClose()
+          }}
+          className="w-full px-4 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center"
+        >
+          <Trash2 className="w-4 h-4 mr-2" />
+          Supprimer
+        </button>
+      </div>
+    </div>
+  )
+
+  return ReactDOM.createPortal(menuContent, document.body)
+}
+
+
   // Refs pour gérer le scroll
   const sidebarScrollRef = useRef(null)
   const scrollPositionRef = useRef(0) // NOUVEAU: stocker position scroll
   const [isUpdatingFolders, setIsUpdatingFolders] = useState(false)
   const [pendingFolderUpdate, setPendingFolderUpdate] = useState(null)
+
+    // NOUVELLES RÉFÉRENCES pour le redimensionnement
+  const containerRef = useRef(null)
+  const isResizing = useRef(false)
+  const resizeType = useRef(null)
 
   // NOUVELLE FONCTION: Préserver scroll lors d'actions UI
   const preserveScrollPosition = useCallback(() => {
@@ -154,6 +232,59 @@ function App() {
     }
   }, [])
 
+   // NOUVELLES FONCTIONS pour le redimensionnement
+  const handleMouseDown = useCallback((e, type) => {
+    e.preventDefault()
+    isResizing.current = true
+    resizeType.current = type
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [])
+
+  const handleMouseMove = useCallback((e) => {
+    if (!isResizing.current || !containerRef.current) return
+    
+    const containerRect = containerRef.current.getBoundingClientRect()
+    const containerWidth = containerRect.width
+    const mouseX = e.clientX - containerRect.left
+    const percentage = (mouseX / containerWidth) * 100
+    
+    if (resizeType.current === 'menu') {
+      const newMenuWidth = Math.max(15, Math.min(35, percentage))
+      setMenuWidth(newMenuWidth)
+      
+      const remainingWidth = 100 - newMenuWidth
+      const currentTotal = listWidth + detailWidth
+      setListWidth((listWidth / currentTotal) * remainingWidth)
+      setDetailWidth((detailWidth / currentTotal) * remainingWidth)
+      
+    } else if (resizeType.current === 'list') {
+      const relativeX = mouseX - (containerWidth * menuWidth / 100)
+      const availableWidth = containerWidth * (100 - menuWidth) / 100
+      const relativePercentage = (relativeX / availableWidth) * (100 - menuWidth)
+      
+      const newListWidth = Math.max(25, Math.min(65, relativePercentage))
+      const newDetailWidth = (100 - menuWidth) - newListWidth
+      
+      if (newDetailWidth >= 20) {
+        setListWidth(newListWidth)
+        setDetailWidth(newDetailWidth)
+      }
+    }
+  }, [menuWidth, listWidth, detailWidth])
+
+  const handleMouseUp = useCallback(() => {
+    isResizing.current = false
+    resizeType.current = null
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }, [])
+
+  // Fonction pour basculer le menu
+  const toggleMenu = () => {
+    setMenuCollapsed(!menuCollapsed)
+  }
+
   // FONCTION AMÉLIORER: Gestion menu contextuel avec préservation scroll
   const handleContextMenu = useCallback((folder, position, level) => {
     // Préserver la position avant d'ouvrir le menu
@@ -173,6 +304,8 @@ function App() {
   const closeContextMenu = useCallback(() => {
     setContextMenu({ show: false, folder: null, position: { x: 0, y: 0 } })
   }, [])
+
+  
 
   // Mémoriser la structure des dossiers avec useCallback pour stabilité
   const organizedFolders = useMemo(() => {
@@ -200,6 +333,34 @@ function App() {
     
     return rootFolders
   }, [folders])
+
+const filteredSubmissions = useMemo(() => {
+  if (!selectedFolder) return []
+  
+  const folder = folders[selectedFolder]
+  if (!folder) return []
+  
+  // Utiliser la fonction de filtrage si elle existe
+  if (folder.filterFunction) {
+    return folder.filterFunction(submissions)
+  }
+  
+  // Sinon, filtrer manuellement selon le label du dossier
+  if (folder.label === 'À compléter' || folder.id.includes('pending')) {
+    return submissions.filter(s => s.status === 'captured')
+  } else if (folder.label === 'Aller prendre mesure' || folder.id.includes('assignments')) {
+    return submissions.filter(s => s.status === 'assignment')
+  } else if (folder.label === 'Soumissions' || folder.id.includes('completed')) {
+    return submissions.filter(s => s.status === 'completed')
+  }
+  
+  // Pour les dossiers personnalisés, utiliser submissionIds
+  if (folder.submissionIds && folder.submissionIds.length > 0) {
+    return submissions.filter(s => folder.submissionIds.includes(s.id))
+  }
+  
+  return submissions
+}, [selectedFolder, folders, submissions])
 
   // Effet pour appliquer les mises à jour en attente AVEC préservation scroll
   useEffect(() => {
@@ -264,25 +425,32 @@ if (folder.label === 'À compléter' || folder.slug === 'pending' || folder.id.i
   filterFunction = (submissions) => applyFolderFilter(folder, submissions);
 } else {
   // 🎯 POUR LES DOSSIERS PERSONNALISÉS - GESTION MULTIPLE IDs
-  filterFunction = (submissions) => {
-    const filtered = submissions.filter(s => {
-      // Correspondances multiples pour compatibilité
-      if (s.folderId === folder.id) return true;
-      
-      // Gestion spéciale pour "Projet 2025"
-      if (folder.id === 'projet_2025' && s.folderId === 'projet_2025_soumissions') return true;
-      
-      // Gestion spéciale pour "Soumissions" 
-// Gestion spéciale pour "Soumissions" 
-if (folder.label === 'Soumissions' && 
-    (s.folderId === 'completed' || s.folderId === 'projet_2025_soumissions' || s.status === 'completed')) return true;
-      
-      return false;
-    });
-    
-    console.log(`🔍 Filtre "${folder.label}": ${filtered.length}/${submissions.length} soumissions (cherche: ${folder.id})`);
+// 🎯 POUR LES DOSSIERS PERSONNALISÉS - GESTION MULTIPLE IDs
+filterFunction = (submissions) => {
+  // Gestion spéciale pour "Projet 2025" - CONTENEUR VIDE
+  if (folder.id === 'projet_2025') {
+    const filtered = []; // Toujours vide pour le conteneur
+    console.log(`🔍 Filtre "${folder.label}": ${filtered.length} soumissions (conteneur parent)`);
     return filtered;
-  };
+  }
+  
+  const filtered = submissions.filter(s => {
+    // Correspondances multiples pour compatibilité
+    if (s.folderId === folder.id) return true;
+    
+    // Gestion spéciale pour "Soumissions" 
+// Gestion spéciale pour "Soumissions" - TEMPORAIRE POUR VOIR TOUTES
+if (folder.label === 'Soumissions') {
+  console.log(`🔍 Test soumission pour ${folder.label}:`, s.client?.adresse, 'folderId:', s.folderId);
+  return (s.folderId === 'completed' || s.folderId === 'projet_2025_soumissions' || s.status === 'completed');
+}
+    
+    return false;
+  });
+  
+  console.log(`🔍 Filtre "${folder.label}": ${filtered.length}/${submissions.length} soumissions (cherche: ${folder.id})`);
+  return filtered;
+};
 }
       
       foldersMap[folder.id] = {
@@ -376,6 +544,50 @@ Object.values(folders).forEach(f => {
       }
     }
   }, [isUpdatingFolders, preserveScrollPosition, restoreScrollPosition])
+
+   useEffect(() => {
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [handleMouseMove, handleMouseUp])
+
+useEffect(() => {
+  if (filteredSubmissions.length > 0 && selectedFolder && !selectedSubmission) {
+    setSelectedSubmission(filteredSubmissions[0])
+  } else if (filteredSubmissions.length === 0) {
+    setSelectedSubmission(null)
+  }
+}, [filteredSubmissions, selectedFolder, selectedSubmission])
+
+// 🔥 REMPLACEZ COMPLÈTEMENT ce useEffect par celui-ci :
+
+useEffect(() => {
+  // Auto-sélection intelligente quand le dossier ou les soumissions changent
+  if (selectedFolder && folders[selectedFolder]) {
+    
+    if (filteredSubmissions.length > 0) {
+      // Vérifier si la note actuellement sélectionnée appartient au dossier actuel
+      const currentSubmissionInFolder = filteredSubmissions.find(s => s.id === selectedSubmission?.id);
+      
+      if (!currentSubmissionInFolder) {
+        // La note actuelle n'appartient pas au nouveau dossier, sélectionner la première
+        setSelectedSubmission(filteredSubmissions[0]);
+        // 🔥 CORRECTION: NE PAS changer currentView, rester en mode dashboard 3 colonnes
+        console.log('🎯 Auto-sélection première note du dossier:', filteredSubmissions[0].client?.adresse);
+      }
+      // Sinon, garder la sélection actuelle si elle appartient au dossier
+      
+    } else {
+      // Aucune note dans ce dossier, déselectionner
+      setSelectedSubmission(null);
+      console.log('🎯 Aucune note disponible dans ce dossier, désélection');
+    }
+  }
+}, [selectedFolder, filteredSubmissions, selectedSubmission, folders])
 
   // Fonction helper pour maintenir le scroll - AMÉLIORÉE
   const withScrollPreservation = async (operation) => {
@@ -692,7 +904,7 @@ const handleCalculateSubmission = (submission) => {
         {selectedFolder !== 'system_assignments' && (
           <div className="grid grid-cols-2 gap-3 text-xs text-gray-600 mb-3">
             <div>
-              <span className="font-medium">Superficie:</span> {submission.toiture?.superficie?.totale || 0} pi²
+              <span className="font-medium">Superficie:</span> {Math.round(submission.toiture?.superficie?.totale || 0)} pi²
             </div>
             <div>
               <span className="font-medium">Photos:</span> {submission.photoCount || 0}
@@ -789,8 +1001,32 @@ const handleCalculateSubmission = (submission) => {
   }
 
   const getFolderCount = (folder) => {
-    return folder.filter ? folder.filter(submissions).length : 0
+  if (!submissions || !Array.isArray(submissions)) return 0;
+  
+  // 🔧 CAS SPÉCIAUX : Les 2 dossiers "Soumissions"
+  if (folder.id === 'completed') {
+    const count = submissions.filter(s => s.folderId === 'completed').length;
+    console.log(`📊 Count completed: ${count}`);
+    return count;
+    
+  } else if (folder.id === 'projet_2025_soumissions') {
+    const count = submissions.filter(s => s.folderId === 'projet_2025_soumissions').length;
+    console.log(`📊 Count projet_2025_soumissions: ${count}`);
+    return count;
+    
+  } else if (folder.filter) {
+    // Dossiers avec filtres normaux
+    const count = folder.filter(submissions).length;
+    console.log(`📊 Count ${folder.label}: ${count}`);
+    return count;
+    
+  } else {
+    // Dossiers personnalisés - compter par folderId
+    const count = submissions.filter(s => s.folderId === folder.id).length;
+    console.log(`📊 Count folderId ${folder.id}: ${count}`);
+    return count;
   }
+}
 
   // Composant pour les options de dossier dans la modal de déplacement
   const FolderMoveOption = ({ folder, level, currentFolderId, onSelect }) => {
@@ -887,8 +1123,9 @@ onClick={() => {
   console.log('🎯 CLIC DÉTECTÉ sur:', folder.label, '| ID:', folder.id, '| isParentFolder:', isParentFolder);
   
   // Toujours permettre la sélection
-  setSelectedFolder(folder.id)
   setActiveView('dashboard')
+  setSelectedFolder(folder.id)
+  
   
   console.log('🎯 setSelectedFolder appelé avec:', folder.id);
 
@@ -915,17 +1152,19 @@ onClick={() => {
               </span>
             )}
             
-            {/* Menu contextuel seulement pour les dossiers non-système et non-parents */}
-            {folder.id !== 'system_assignments' && 
-             folder.id !== 'system_pending' && 
-             !isParentFolder && (
-              <button
-                onClick={handleMenuClick}
-                className="p-1 opacity-0 group-hover:opacity-100 hover:bg-gray-200 rounded"
-              >
-                <MoreVertical className="w-3 h-3" />
-              </button>
-            )}
+           {/* Menu contextuel - EXCLU seulement pour les 2 dossiers système principaux */}
+{folder.id !== 'assignments' && 
+ folder.id !== 'pending' && 
+ folder.id !== 'system_assignments' && 
+ folder.id !== 'system_pending' && (
+  <button
+    onClick={handleMenuClick}
+    className="p-1 opacity-0 group-hover:opacity-100 hover:bg-gray-200 rounded"
+    title="Options du dossier"
+  >
+    <MoreVertical className="w-3 h-3" />
+  </button>
+)}
             
             {hasChildren && (
               <button
@@ -955,8 +1194,8 @@ onClick={() => {
     )
   })
 
-  const Sidebar = () => (
-    <div className="w-80 bg-gray-50 border-r border-gray-200 flex flex-col h-screen">
+  const Sidebar = ({ toggleMenu }) => (
+  <div className="bg-gray-50 flex flex-col h-full">
       <div className="p-4 border-b border-gray-200 bg-white">
         <div className="flex items-center space-x-3">
           <div className="bg-green-500 p-2 rounded-lg">
@@ -978,15 +1217,19 @@ onClick={() => {
       </div>
 
       <div className="p-4 border-b border-gray-200">
-        <button
-          onClick={() => setActiveView('dashboard')}
-          className={`w-full flex items-center px-3 py-2 text-sm rounded-lg ${
-            activeView === 'dashboard' ? 'bg-green-100 text-green-700' : 'text-gray-700 hover:bg-gray-100'
-          }`}
-        >
-          <Home className="w-4 h-4 mr-3" />
-          Tableau de bord
-        </button>
+      <button
+  onClick={() => {
+    setActiveView('calendar')  // ✅ CHANGÉ: dashboard → calendar
+    setSelectedFolder(null)    // ✅ CHANGÉ: Pas de dossier spécifique
+    setSelectedSubmission(null) // ✅ AJOUTÉ: Reset la sélection
+  }}
+  className={`w-full flex items-center px-3 py-2 text-sm rounded-lg ${
+    activeView === 'calendar' ? 'bg-green-100 text-green-700' : 'text-gray-700 hover:bg-gray-100'  // ✅ CHANGÉ: dashboard → calendar
+  }`}
+>
+  <Home className="w-4 h-4 mr-3" />
+  Tableau de bord
+</button>
         
         <button
           onClick={() => {
@@ -1112,7 +1355,7 @@ onClick={() => {
       )
     }
     
-   const currentSubmissions = useMemo(() => {
+ const currentSubmissions = useMemo(() => {
   console.log('🔍 useMemo currentSubmissions calculé', {
     selectedFolder,
     folderExists: !!folders[selectedFolder],
@@ -1121,11 +1364,33 @@ onClick={() => {
   
   if (!selectedFolder || !folders[selectedFolder]) return []
   const folder = folders[selectedFolder]
-  if (!folder.filter || !Array.isArray(submissions)) return []
+  if (!Array.isArray(submissions)) return []
   
-  const filtered = folder.filter(submissions)
-  console.log(`🔍 ${folder.label}: ${filtered.length} soumissions filtrées FOR DISPLAY`)
-  return filtered
+  // 🔧 CAS SPÉCIAUX : Les 2 dossiers "Soumissions"
+  if (selectedFolder === 'completed') {
+    // Dossier "Soumissions" SYSTEM (vert clair)
+    const filtered = submissions.filter(s => s.folderId === 'completed');
+    console.log(`🔧 Soumissions (completed): ${filtered.length} soumissions`);
+    return filtered;
+    
+  } else if (selectedFolder === 'projet_2025_soumissions') {
+    // Dossier "Soumissions" CUSTOM (vert foncé)  
+    const filtered = submissions.filter(s => s.folderId === 'projet_2025_soumissions');
+    console.log(`🔧 Soumissions (projet): ${filtered.length} soumissions`);
+    return filtered;
+    
+  } else if (folder.filter) {
+    // Dossiers avec filtres normaux
+    const filtered = folder.filter(submissions)
+    console.log(`🔍 ${folder.label}: ${filtered.length} soumissions filtrées FOR DISPLAY`)
+    return filtered
+    
+  } else {
+    // Fallback - filtre par folderId direct
+    const filtered = submissions.filter(s => s.folderId === selectedFolder);
+    console.log(`🔍 Fallback "${folder.label}": ${filtered.length} soumissions`);
+    return filtered;
+  }
 }, [selectedFolder, folders, submissions])
 console.log('🎯 MainContent rendu:', {
   selectedFolder,
@@ -1143,41 +1408,204 @@ window.debugMainContent = {
     return (
       <div className="flex-1 p-6 overflow-y-auto">
         <div className="max-w-7xl mx-auto">
-          <div className="mb-6">
-            <h1 className="text-2xl font-bold text-gray-900 flex items-center">
-              {React.createElement(ICON_COMPONENTS[currentFolder?.icon] || Folder, {
-                className: "w-6 h-6 mr-3",
-                style: { color: currentFolder?.color }
-              })}
-              {currentFolder?.label}
-            </h1>
-            <p className="text-gray-600 text-sm mt-1">
-              {currentSubmissions.length} soumission{currentSubmissions.length !== 1 ? 's' : ''}
-            </p>
-          </div>
+{currentSubmissions.length > 0 && (
+  <div className="mb-6">
+    <div className="flex items-center justify-between">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900 flex items-center">
+          {React.createElement(ICON_COMPONENTS[currentFolder?.icon] || Folder, {
+            className: "w-6 h-6 mr-3",
+            style: { color: currentFolder?.color }
+          })}
+          {currentFolder?.label}
+        </h1>
+        <p className="text-gray-600 text-sm mt-1">
+          {currentSubmissions.length} soumission{currentSubmissions.length !== 1 ? 's' : ''}
+        </p>
+      </div>
+      
+      {/* Bouton + Nouvelle soumission - seulement dans "Aller prendre mesure" */}
+      {selectedFolder === 'assignments' && (
+        <button
+          onClick={() => setShowAssignmentModal(true)}
+          className="flex items-center space-x-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors"
+        >
+          <Plus className="w-4 h-4" />
+          <span>Nouvelle soumission</span>
+        </button>
+      )}
+    </div>
+  </div>
+)}
 
-          {currentSubmissions.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {currentSubmissions.map(submission => (
-                <SubmissionCard key={submission.id} submission={submission} />
-              ))}
+// ✅ SECTION OPTIMISÉE pour l'affichage des détails dans la colonne du milieu
+// Remplacer la section existante dans App.jsx (lignes ~900-950)
+
+{currentSubmissions.length > 0 ? (
+  <div className="space-y-2">
+    {currentSubmissions.map((submission) => {
+      const superficie = submission.toiture?.superficie?.totale || 0;
+      const hasPhotos = submission.photoUrls && submission.photoUrls.length > 0;
+
+      // ✅ NOUVELLE fonction pour formater la date correctement
+      const formatDate = (createdAt) => {
+        if (!createdAt) return 'N/A';
+        
+        try {
+          // Si c'est un timestamp Firestore
+          if (createdAt.seconds) {
+            return new Date(createdAt.seconds * 1000).toLocaleDateString('fr-CA', {
+              day: '2-digit',
+              month: '2-digit', 
+              year: '2-digit'
+            });
+          }
+          // Si c'est déjà une date
+          if (createdAt instanceof Date) {
+            return createdAt.toLocaleDateString('fr-CA', {
+              day: '2-digit',
+              month: '2-digit',
+              year: '2-digit' 
+            });
+          }
+          // Si c'est une string de date
+          if (typeof createdAt === 'string') {
+            return new Date(createdAt).toLocaleDateString('fr-CA', {
+              day: '2-digit',
+              month: '2-digit',
+              year: '2-digit'
+            });
+          }
+          return 'N/A';
+        } catch (error) {
+          console.warn('Erreur formatage date:', error);
+          return 'N/A';
+        }
+      };
+
+      return (
+        <div key={submission.id} className="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-sm hover:border-blue-300 transition-all cursor-pointer"
+             onClick={() => {
+               setSelectedSubmission(submission);
+               setCurrentView('viewer');
+             }}>
+          
+          {/* ✅ STRUCTURE OPTIMISÉE - 2 LIGNES AU LIEU DE 3 */}
+          <div className="space-y-2">
+            
+            {/* 🔥 LIGNE 1: Adresse + Nom + Téléphone + Bouton Calculer */}
+            <div className="flex items-center justify-between">
+              {/* Partie gauche: Adresse */}
+              <div className="flex-1 min-w-0 pr-4">
+                <div className="font-medium text-gray-900 truncate">
+                  {submission.client?.adresse || submission.adresse || 'Adresse non spécifiée'}
+                </div>
+              </div>
+              
+              {/* ✅ NOUVEAU: Partie droite: Nom + Téléphone + Actions */}
+              <div className="flex items-center space-x-4 flex-shrink-0">
+                {/* Nom client */}
+                <div className="text-gray-700 text-sm min-w-0 max-w-32 truncate">
+                  {submission.client?.nom || 'N/A'}
+                </div>
+                
+                {/* Téléphone */}
+                <div className="text-gray-600 text-sm min-w-0 max-w-28 truncate">
+                  {submission.client?.telephone || 'N/A'}
+                </div>
+                
+                {/* Bouton Calculer - seulement dans l'onglet "À compléter" */}
+                {(selectedFolder === 'pending' || 
+                  (selectedFolder && folders[selectedFolder] && 
+                   (folders[selectedFolder].label === 'À compléter' || 
+                    folders[selectedFolder].id.includes('pending')))) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCalculateSubmission(submission);
+                    }}
+                    className="px-3 py-1 bg-green-500 hover:bg-green-600 text-white text-xs rounded-md font-medium transition-colors flex items-center"
+                    title="Calculer le prix de cette soumission"
+                  >
+                    <Calculator className="w-3 h-3 mr-1" />
+                    Calculer
+                  </button>
+                )}
+              </div>
             </div>
-          ) : (
-            <div className="bg-gray-50 rounded-xl border-2 border-dashed border-gray-300 p-12 text-center">
-              <h3 className="text-xl font-medium text-gray-700 mb-3">
-                Aucune soumission dans ce dossier
-              </h3>
-              {selectedFolder === 'system_assignments' && (
+
+            {/* 🔥 LIGNE 2: Superficie + Date + Actions */}
+            <div className="flex items-center justify-between">
+              {/* Superficie */}
+              <div className="flex items-center space-x-2">
+                <div className="font-semibold text-blue-600 text-sm">
+                  {Math.round(superficie)} pi²
+                </div>
+              </div>
+              
+              {/* Actions de droite */}
+              <div className="flex items-center space-x-2">
+                {/* Date de création */}
+                <div className="text-gray-500 text-xs">
+                  {formatDate(submission.createdAt)}
+                </div>
+                
+                {/* Indicateur photos */}
+                {hasPhotos && (
+                  <div className="flex items-center text-green-600">
+                    <Camera className="w-4 h-4" />
+                    <span className="text-xs ml-1">{submission.photoUrls.length}</span>
+                  </div>
+                )}
+                
+                {/* Bouton voir */}
                 <button
-                  onClick={() => setShowAssignmentModal(true)}
-                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-lg"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedSubmission(submission);
+                    setCurrentView('viewer');
+                  }}
+                  className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                  title="Voir les détails"
                 >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Créer une nouvelle soumission
+                  <Eye className="w-4 h-4" />
                 </button>
-              )}
+
+                {/* Menu contextuel */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setSubmissionContextMenu({
+                      show: true,
+                      submission: submission,
+                      position: { 
+                        x: rect.left - 150, 
+                        y: rect.bottom + 5 
+                      }
+                    });
+                  }}
+                  className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded transition-colors"
+                  title="Plus d'options"
+                >
+                  <MoreVertical className="w-4 h-4" />
+                </button>
+              </div>
             </div>
-          )}
+          </div>
+        </div>
+      );
+    })}
+  </div>
+) : (
+  // GARDER cette partie identique - NE PAS MODIFIER
+  // 🆕 CALENDRIER PERSONNALISÉ au lieu de Google Calendar
+  <div className="space-y-6">
+    {/* 🆕 TON NOUVEAU CALENDRIER PERSONNALISÉ */}
+    <CustomCalendar />
+  </div>
+)}
+
         </div>
       </div>
     )
@@ -1235,128 +1663,603 @@ window.debugMainContent = {
     )
   }
 
-  return (
-    <>
-      {currentView === 'viewer' && selectedSubmission ? (
-        <SubmissionViewer
-          submission={selectedSubmission}
-          onBack={() => {
-            setCurrentView('dashboard');
-            setSelectedSubmission(null);
-          }}
-          
-         onUpdate={handleUpdateSubmissionNotes}
-        />
-      ) : (
-        <div className="flex h-screen bg-white">
-          <Sidebar />
-          <MainContent />
+return (
+  <>
+    {currentView === 'viewer' && selectedSubmission ? (
+      <SubmissionViewer
+        submission={selectedSubmission}
+        onBack={() => {
+          setCurrentView('dashboard');
+          setSelectedSubmission(null);
+        }}
+        onUpdate={handleUpdateSubmissionNotes}
+      />
+    ) : (
+      <div 
+        ref={containerRef}
+        className="flex h-screen bg-white overflow-hidden"
+        style={{ userSelect: isResizing.current ? 'none' : 'auto' }}
+      >
+        {/* COLONNE 1: SIDEBAR TOUJOURS VISIBLE */}
+        {!menuCollapsed && (
+          <>
+            <div 
+              style={{ width: `${menuCollapsed ? 0 : menuWidth}%` }}
+              className="bg-gray-50 border-r border-gray-200"
+            >
+              <Sidebar toggleMenu={toggleMenu} />
+            </div>
 
-          {/* Menu contextuel en portail */}
-          {contextMenu.show && (
-            <ContextMenu
-              folder={contextMenu.folder}
-              position={contextMenu.position}
-              onClose={closeContextMenu}
-              onEdit={(folder) => {
-                preserveScrollPosition()
-                setFolderModal({ show: true, folder, parentFolder: null })
-                closeContextMenu()
-              }}
-              onDelete={handleDeleteFolder}
-              onAddSubfolder={(folder) => {
-                preserveScrollPosition()
-                setFolderModal({ show: true, folder: null, parentFolder: folder })
-                closeContextMenu()
-              }}
+            {/* Séparateur redimensionnable pour le menu */}
+            <div
+              className="w-1 bg-gray-200 hover:bg-blue-400 cursor-col-resize transition-colors"
+              onMouseDown={(e) => handleMouseDown(e, 'menu')}
             />
-          )}
+          </>
+        )}
 
-          {/* Modals */}
-          <AssignmentModal
-            isOpen={showAssignmentModal}
-            onClose={() => setShowAssignmentModal(false)}
-            onSubmit={handleSubmitAssignment}
-          />
+        {/* Bouton pour réafficher le menu quand masqué */}
+        {menuCollapsed && (
+          <div className="w-12 bg-gray-50 border-r border-gray-200 flex flex-col items-center py-4">
+            <button
+              onClick={toggleMenu}
+              className="p-2 hover:bg-gray-100 rounded-lg"
+              title="Afficher le menu"
+            >
+              <PanelLeft className="w-5 h-5 text-gray-600" />
+            </button>
+          </div>
+        )}
 
-          <FolderManagementModal
-            isOpen={folderModal.show}
-            onClose={() => {
-              setFolderModal({ show: false, folder: null, parentFolder: null })
-            }}
-            onSave={handleSaveFolder}
-            folder={folderModal.folder}
-            parentFolder={folderModal.parentFolder}
-          />
-
-          {deleteModal.show && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">
-                  Confirmer la suppression
-                </h3>
-                <p className="text-gray-600 mb-6">
-                  Êtes-vous sûr de vouloir supprimer "{deleteModal.submission?.address}" ?
-                  Cette action est irréversible.
-                </p>
-                <div className="flex space-x-3">
+        {/* ZONE PRINCIPALE - CALENDRIER OU LAYOUT 3 COLONNES */}
+        {activeView === 'calendar' ? (
+          // VUE CALENDRIER EN PLEINE LARGEUR (avec sidebar à gauche)
+          <div className="flex-1 bg-gray-50">
+            <div className="bg-white border-b border-gray-200 px-6 py-4">
+              <h1 className="text-xl font-bold text-gray-900">Tableau de bord - Calendrier</h1>
+            </div>
+            <div className="p-6 overflow-y-auto h-[calc(100vh-73px)]">
+              <CustomCalendar />
+            </div>
+          </div>
+        ) : activeView === 'calculator' ? (
+          // VUE CALCULATEUR EN PLEINE LARGEUR (avec sidebar à gauche)
+          <div className="flex-1 bg-gray-50">
+            <div className="bg-white border-b border-gray-200 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-4">
                   <button
-                    onClick={() => setDeleteModal({ show: false, submission: null })}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
+                    onClick={handleBackFromCalculator}
+                    className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 transition-colors"
                   >
-                    Annuler
+                    <ChevronRight className="w-5 h-5 rotate-180" />
+                    <span className="font-medium">Retour au tableau de bord</span>
                   </button>
-                  <button
-                    onClick={confirmDeleteSubmission}
-                    className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg"
-                  >
-                    Supprimer
-                  </button>
+                  <div className="w-px h-6 bg-gray-300" />
+                  <div>
+                    <h1 className="text-xl font-bold text-gray-900">Calculateur Soumission</h1>
+                    {selectedSubmission && (
+                      <p className="text-sm text-gray-600 mt-0.5">
+                        Calcul pour: {selectedSubmission.client?.adresse || selectedSubmission.displayName}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <div className={`w-2 h-2 rounded-full ${firebaseConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+                  <span className="text-sm text-gray-600">
+                    {firebaseConnected ? 'Synchronisé' : 'Hors ligne'}
+                  </span>
+                  <div className="w-px h-4 bg-gray-300" />
+                  <span className="text-xs text-gray-500">
+                    Brouillon automatique activé
+                  </span>
                 </div>
               </div>
             </div>
-          )}
-
-          {moveModal.show && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-              <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[80vh] flex flex-col">
-                <h3 className="text-lg font-medium text-gray-900 mb-4">
-                  Déplacer vers un autre dossier
-                </h3>
-                <p className="text-sm text-gray-600 mb-4">
-                  Sélectionnez le dossier de destination pour "{moveModal.submission?.client?.adresse || 'cette soumission'}"
-                </p>
-                
-                <div className="flex-1 overflow-y-auto mb-4 border rounded-lg p-2">
-                  {organizedFolders.map(folder => (
-                    <FolderMoveOption 
-                      key={folder.id} 
-                      folder={folder} 
-                      level={0}
-                      currentFolderId={selectedFolder}
-                      onSelect={(folderId) => handleMoveSubmission(moveModal.submission.id, folderId)}
-                    />
-                  ))}
-                </div>
-                
-                <button
-                  onClick={() => setMoveModal({ show: false, submission: null })}
-                  className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
-                >
-                  Annuler
-                </button>
+            <div className="p-8 overflow-y-auto h-[calc(100vh-73px)]">
+              <div className="max-w-[1600px] mx-auto">
+                <CalculatorView 
+                  prefilledData={selectedSubmission?.prefilledData}
+                  onSaveCalculation={handleSaveCalculation}
+                  onBack={handleBackFromCalculator}
+                />
               </div>
             </div>
-          )}
+          </div>
+        ) : (
+          // LAYOUT 3 COLONNES NORMAL (vue dashboard par défaut)
+          <>
+            {/* COLONNE 2: LISTE DES SOUMISSIONS */}
+            <div 
+              className="bg-white border-r border-gray-200 flex flex-col"
+              style={{ width: `${menuCollapsed ? listWidth * 100 / (100 - menuWidth) : listWidth}%` }}
+            >
+              {/* Header de la liste */}
+              <div className="p-4 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    {selectedFolder && folders[selectedFolder] ? folders[selectedFolder].label : 'Soumissions'}
+                  </h2>
+                  <span className="text-sm text-gray-500">
+                    {filteredSubmissions.length} élément{filteredSubmissions.length > 1 ? 's' : ''}
+                  </span>
+                </div>
+              </div>
 
-          <NotificationContainer
-            notifications={notifications}
-            onRemove={removeNotification}
-          />
+              {/* Liste des soumissions */}
+             <div className="space-y-4 p-4">
+  {filteredSubmissions.map(submission => {
+    // ✅ NOUVELLE fonction pour corriger la date
+    const formatDate = (createdAt) => {
+      if (!createdAt) return 'N/A';
+      try {
+        if (createdAt.seconds) {
+          return new Date(createdAt.seconds * 1000).toLocaleDateString('fr-CA', {
+            day: '2-digit', month: '2-digit', year: '2-digit'
+          });
+        }
+        if (createdAt instanceof Date) {
+          return createdAt.toLocaleDateString('fr-CA', {
+            day: '2-digit', month: '2-digit', year: '2-digit'
+          });
+        }
+        if (typeof createdAt === 'string') {
+          return new Date(createdAt).toLocaleDateString('fr-CA', {
+            day: '2-digit', month: '2-digit', year: '2-digit'
+          });
+        }
+        return 'N/A';
+      } catch (error) {
+        return 'N/A';
+      }
+    };
+
+    return (
+      <div
+        key={submission.id}
+        onClick={() => setSelectedSubmission(submission)}
+        className={`p-3 mb-2 rounded-lg border cursor-pointer transition-all ${
+          selectedSubmission?.id === submission.id 
+            ? 'border-blue-500 bg-blue-50 shadow-md' 
+            : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
+        }`}
+      >
+        {/* ✅ STRUCTURE OPTIMISÉE - 2 lignes au lieu de 3 */}
+        <div className="space-y-2">
+          
+
+
+{/* LIGNE 1: Adresse + Nom + Téléphone RAPPROCHÉS + Bouton Calculer */}
+<div className="flex items-center">
+  
+  {/* GROUPE GAUCHE: Adresse + Nom + Téléphone rapprochés */}
+  <div className="flex items-center space-x-3 flex-1 min-w-0">
+    
+    {/* Adresse */}
+    <div className="font-medium text-gray-900 truncate max-w-40">
+      {submission.client?.adresse || submission.displayName || 'Adresse inconnue'}
+    </div>
+    
+    {/* Nom */}
+    <div className="text-gray-700 text-sm truncate max-w-24">
+      {submission.client?.nom || 'N/A'}
+    </div>
+    
+    {/* Téléphone */}
+    <div className="text-gray-600 text-sm truncate max-w-24">
+      {submission.client?.telephone || 'N/A'}
+    </div>
+  </div>
+  
+  {/* GROUPE DROITE: Bouton Calculer */}
+  <div className="flex items-center space-x-2 flex-shrink-0 ml-auto">
+    
+    {/* ✅ BOUTON CALCULER - CONDITION CORRIGÉE */}
+    {(selectedFolder === 'pending' || 
+      selectedFolder === 'system_pending' ||
+      (selectedFolder && folders[selectedFolder] && 
+       (folders[selectedFolder].label === 'À compléter' || 
+        folders[selectedFolder].label?.toLowerCase().includes('compléter') ||
+        folders[selectedFolder].id?.includes('pending') ||
+        folders[selectedFolder].slug === 'pending'
+       )
+      )
+    ) && (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          console.log('🔥 BOUTON CALCULER CLIQUÉ'); // Debug
+          handleCalculateSubmission(submission);
+        }}
+        className="px-3 py-1 bg-green-500 hover:bg-green-600 text-white text-xs rounded-md font-medium transition-colors flex items-center"
+        title="Calculer le prix de cette soumission"
+      >
+        <Calculator className="w-3 h-3 mr-1" />
+        Calculer
+      </button>
+    )}
+  </div>
+</div>
+
+          {/* LIGNE 2: Superficie + Date + Menu */}
+          <div className="flex items-center justify-between">
+            {/* Superficie */}
+            <span className="text-xs text-blue-600 font-semibold">
+              {Math.round(submission.toiture?.superficie?.totale || 0)} pi²
+            </span>
+            
+            {/* Date + Menu */}
+            <div className="flex items-center space-x-2">
+              <span className="text-xs text-gray-500">
+                {formatDate(submission.createdAt)}
+              </span>
+              
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setSubmissionContextMenu({
+                    show: true,
+                    submission: submission,
+                    position: { x: rect.left - 150, y: rect.bottom + 5 }
+                  });
+                }}
+                className="p-1 text-gray-400 hover:text-gray-600 rounded"
+              >
+                <MoreVertical className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
         </div>
+      </div>
+    );
+  })}
+</div>
+            </div>
+
+            {/* Séparateur redimensionnable pour la liste */}
+            <div 
+  className="bg-white flex flex-col"
+  style={{ width: `${menuCollapsed ? detailWidth * 100 / (100 - menuWidth) : detailWidth}%` }}
+>
+  {selectedSubmission ? (
+    // ✅ CONDITION SPÉCIALE pour "Aller prendre mesure" 
+    selectedFolder && folders[selectedFolder]?.label === 'Aller prendre mesure' ? (
+      // 🎯 VUE SIMPLIFIÉE POUR ASSIGNMENTS
+      <div className="h-full overflow-y-auto p-6">
+        {/* Header avec bouton retour */}
+        <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-200">
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => setSelectedSubmission(null)}
+              className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div>
+              <h1 className="text-xl font-semibold text-gray-900">
+                {selectedSubmission.client?.adresse || 'Adresse non spécifiée'}
+              </h1>
+              <p className="text-sm text-gray-500">Informations client</p>
+            </div>
+          </div>
+        </div>
+
+        {/* 👤 INFORMATIONS CLIENT */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center">
+            <User className="w-5 h-5 mr-2 text-blue-500" />
+            Informations client
+          </h2>
+          
+          <div className="space-y-3">
+            <div className="flex items-center justify-between py-2 border-b border-gray-100">
+              <span className="text-sm font-medium text-gray-600">Nom :</span>
+              <span className="text-sm text-gray-900 font-medium">
+                {selectedSubmission.client?.nom || 'Non spécifié'}
+              </span>
+            </div>
+            
+            <div className="flex items-center justify-between py-2 border-b border-gray-100">
+              <span className="text-sm font-medium text-gray-600">Téléphone :</span>
+              <span className="text-sm text-gray-900">
+                {selectedSubmission.client?.telephone || 'Non spécifié'}
+              </span>
+            </div>
+            
+            <div className="flex items-center justify-between py-2 border-b border-gray-100">
+              <span className="text-sm font-medium text-gray-600">Email :</span>
+              <span className="text-sm text-gray-900">
+                {selectedSubmission.client?.courriel || 'Non spécifié'}
+              </span>
+            </div>
+            
+            <div className="flex items-center justify-between py-2">
+              <span className="text-sm font-medium text-gray-600">Adresse :</span>
+              <span className="text-sm text-gray-900 text-right max-w-xs">
+                {selectedSubmission.client?.adresse || 'Non spécifiée'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 🗺️ LIEN GOOGLE MAPS */}
+        {selectedSubmission.client?.adresse && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+            <h2 className="text-lg font-semibold mb-4 flex items-center">
+              <MapPin className="w-5 h-5 mr-2 text-green-500" />
+              Localisation
+            </h2>
+            
+            <button
+              onClick={() => {
+                const address = selectedSubmission.client.adresse;
+                const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+                window.open(googleMapsUrl, '_blank');
+              }}
+              className="w-full flex items-center justify-center space-x-2 p-3 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors group"
+            >
+              <ExternalLink className="w-4 h-4 text-blue-600 group-hover:text-blue-700" />
+              <span className="text-blue-600 group-hover:text-blue-700 font-medium">
+                Voir sur Google Maps
+              </span>
+            </button>
+          </div>
+        )}
+
+  
+{/* 📝 NOTES ÉDITABLES */}
+<div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+  <div className="flex items-center justify-between mb-4">
+    <h2 className="text-lg font-semibold flex items-center">
+      <FileText className="w-5 h-5 mr-2 text-yellow-500" />
+      Notes
+    </h2>
+    {!isEditingNotes && (
+      <button
+        onClick={() => {
+          console.log('🔧 Bouton Modifier cliqué'); // DEBUG
+          setIsEditingNotes(true)
+          setEditedNotes(selectedSubmission.notes || '')
+        }}
+        className="flex items-center space-x-2 px-3 py-1 text-blue-600 hover:text-blue-800 text-sm hover:bg-blue-50 rounded transition-colors"
+      >
+        <Edit3 className="w-4 h-4" />
+        <span>Modifier</span>
+      </button>
+    )}
+  </div>
+  
+  {isEditingNotes ? (
+    <div>
+      <textarea
+        value={editedNotes}
+        onChange={(e) => setEditedNotes(e.target.value)}
+        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none text-sm"
+        rows={4}
+        placeholder="Ajoutez vos notes ici..."
+        disabled={isSavingNotes}
+      />
+      
+      <div className="flex space-x-3 mt-3">
+        <button
+          onClick={async () => {
+            console.log('🔧 Sauvegarde en cours...'); // DEBUG
+            setIsSavingNotes(true)
+            try {
+              await handleUpdateSubmissionNotes(selectedSubmission.id, { 
+                notes: editedNotes.trim() 
+              })
+              selectedSubmission.notes = editedNotes.trim()
+              setIsEditingNotes(false)
+              console.log('✅ Notes sauvegardées avec succès'); // DEBUG
+            } catch (error) {
+              console.error('❌ Erreur sauvegarde:', error)
+            } finally {
+              setIsSavingNotes(false)
+            }
+          }}
+          disabled={isSavingNotes}
+          className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg font-medium text-sm ${
+            isSavingNotes 
+              ? 'bg-gray-400 text-white cursor-not-allowed' 
+              : 'bg-green-500 hover:bg-green-600 text-white'
+          }`}
+        >
+          <Save className="w-4 h-4" />
+          <span>{isSavingNotes ? 'Sauvegarde...' : 'Sauvegarder'}</span>
+        </button>
+        
+        <button
+          onClick={() => {
+            setEditedNotes(selectedSubmission.notes || '')
+            setIsEditingNotes(false)
+          }}
+          disabled={isSavingNotes}
+          className="px-3 py-1.5 text-gray-700 hover:text-gray-900 text-sm"
+        >
+          Annuler
+        </button>
+      </div>
+    </div>
+  ) : (
+    <div className="bg-gray-50 rounded-lg p-4">
+      {selectedSubmission.notes ? (
+        <p className="text-gray-700 whitespace-pre-wrap text-sm leading-relaxed">
+          {selectedSubmission.notes}
+        </p>
+      ) : (
+        <p className="text-gray-500 text-sm italic">
+          Aucune note disponible
+        </p>
       )}
-    </>
-  )
+    </div>
+  )}
+</div>
+
+
+      </div>
+    ) : (
+      // ✅ VUE NORMALE (SubmissionViewer) pour les autres onglets
+     <SubmissionViewer 
+  submission={selectedSubmission} 
+  onBack={() => setSelectedSubmission(null)}
+  onUpdate={handleUpdateSubmissionNotes}
+/>
+    )
+  ) : (
+    <div className="flex-1 flex items-center justify-center text-gray-500">
+      <div className="text-center">
+        <FileText className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+        <h3 className="text-lg font-medium mb-2">Aucune soumission sélectionnée</h3>
+        <p className="text-sm">Sélectionnez une soumission dans la liste pour voir ses détails</p>
+      </div>
+    </div>
+  )}
+</div>
+          </>
+        )}
+
+        {/* Indicateur de redimensionnement */}
+        {isResizing.current && (
+          <div className="fixed inset-0 pointer-events-none z-50">
+            <div className="absolute inset-0 bg-black bg-opacity-5" />
+          </div>
+        )}
+
+        {/* MENU CONTEXTUEL DOSSIERS */}
+        {contextMenu.show && (
+          <ContextMenu
+            folder={contextMenu.folder}
+            position={contextMenu.position}
+            onClose={closeContextMenu}
+            onEdit={(folder) => {
+              preserveScrollPosition()
+              setFolderModal({ show: true, folder, parentFolder: null })
+              closeContextMenu()
+            }}
+            onDelete={handleDeleteFolder}
+            onAddSubfolder={(folder) => {
+              preserveScrollPosition()
+              setFolderModal({ show: true, folder: null, parentFolder: folder })
+              closeContextMenu()
+            }}
+          />
+        )}
+
+        {/* MENU CONTEXTUEL SOUMISSIONS */}
+        {submissionContextMenu.show && (
+          <SubmissionContextMenu
+            submission={submissionContextMenu.submission}
+            position={submissionContextMenu.position}
+            onClose={() => setSubmissionContextMenu({ show: false, submission: null, position: { x: 0, y: 0 } })}
+            onDelete={(submission) => {
+              setDeleteModal({ 
+                show: true, 
+                submission: { 
+                  ...submission, 
+                  address: submission.client?.adresse || submission.adresse || 'Soumission'
+                }
+              });
+              setSubmissionContextMenu({ show: false, submission: null, position: { x: 0, y: 0 } });
+            }}
+            onMove={(submission) => {
+              setMoveModal({ show: true, submission });
+              setSubmissionContextMenu({ show: false, submission: null, position: { x: 0, y: 0 } });
+            }}
+          />
+        )}
+      </div>
+    )}
+
+    {/* MODAL NOUVELLE SOUMISSION */}
+    <AssignmentModal
+      isOpen={showAssignmentModal}
+      onClose={() => setShowAssignmentModal(false)}
+      onSubmit={handleSubmitAssignment}
+    />
+
+    {/* MODAL GESTION DOSSIERS */}
+    <FolderManagementModal
+      isOpen={folderModal.show}
+      onClose={() => {
+        setFolderModal({ show: false, folder: null, parentFolder: null })
+      }}
+      onSave={handleSaveFolder}
+      folder={folderModal.folder}
+      parentFolder={folderModal.parentFolder}
+    />
+
+    {/* MODAL CONFIRMATION SUPPRESSION */}
+    {deleteModal.show && (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">
+            Confirmer la suppression
+          </h3>
+          <p className="text-gray-600 mb-6">
+            Êtes-vous sûr de vouloir supprimer "{deleteModal.submission?.address}" ?
+            Cette action est irréversible.
+          </p>
+          <div className="flex space-x-3">
+            <button
+              onClick={() => setDeleteModal({ show: false, submission: null })}
+              className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
+            >
+              Annuler
+            </button>
+            <button
+              onClick={confirmDeleteSubmission}
+              className="flex-1 px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg"
+            >
+              Supprimer
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* MODAL DÉPLACER SOUMISSION */}
+    {moveModal.show && (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[80vh] flex flex-col">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">
+            Déplacer vers un autre dossier
+          </h3>
+          <p className="text-sm text-gray-600 mb-4">
+            Sélectionnez le dossier de destination pour "{moveModal.submission?.client?.adresse || 'cette soumission'}"
+          </p>
+          
+          <div className="flex-1 overflow-y-auto mb-4 border rounded-lg p-2">
+            {organizedFolders.map(folder => (
+              <FolderMoveOption 
+                key={folder.id} 
+                folder={folder} 
+                level={0}
+                currentFolderId={selectedFolder}
+                onSelect={(folderId) => handleMoveSubmission(moveModal.submission.id, folderId)}
+              />
+            ))}
+          </div>
+          
+          <button
+            onClick={() => setMoveModal({ show: false, submission: null })}
+            className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg"
+          >
+            Annuler
+          </button>
+        </div>
+      </div>
+    )}
+
+    {/* NOTIFICATIONS */}
+    <NotificationContainer
+      notifications={notifications}
+      onRemove={removeNotification}
+    />
+  </>
+)
 }
 
 export default App
