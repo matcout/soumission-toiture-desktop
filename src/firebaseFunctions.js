@@ -75,7 +75,7 @@ export const subscribeToSubmissions = (callback) => {
 // Créer un assignment
 export const createAssignment = async (assignmentData) => {
   try {
-    console.log('📝 Création assignment...');
+    console.log('📱 Création assignment...');
     
     const addressClean = assignmentData.client?.adresse
       ?.toLowerCase()
@@ -83,12 +83,12 @@ export const createAssignment = async (assignmentData) => {
       .replace(/\s+/g, '_')
       .substring(0, 20) || 'assignment';
     
-    // Utiliser la nouvelle fonction pour ID unique
     const customId = generateUniqueId(`assignment_${addressClean}`);
     
     const dataToSave = {
       ...assignmentData,
-      status: 'assignment',
+      // ✅ SUPPRIMÉ : status: 'assignment',
+      folderId: 'assignments', // ✅ Directement dans le bon dossier
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       platform: 'desktop',
@@ -114,10 +114,11 @@ export const createAssignment = async (assignmentData) => {
   }
 };
 
+
 // Mettre à jour le statut d'une soumission
-export const updateSubmissionStatus = async (submissionId, newStatus, additionalData = {}) => {
+export const updateSubmissionStatus = async (submissionId, newFolderId, additionalData = {}) => {
   try {
-    console.log('📝 Mise à jour soumission:', submissionId);
+    console.log('✏️ Mise à jour soumission:', submissionId);
     
     const updateData = {
       updatedAt: serverTimestamp(),
@@ -125,8 +126,9 @@ export const updateSubmissionStatus = async (submissionId, newStatus, additional
       ...additionalData
     };
     
-    if (newStatus) {
-      updateData.status = newStatus;
+    // ✅ SIMPLE : Juste mettre à jour le folderId
+    if (newFolderId) {
+      updateData.folderId = newFolderId;
     }
 
     const submissionRef = doc(db, 'soumissions', submissionId);
@@ -136,7 +138,7 @@ export const updateSubmissionStatus = async (submissionId, newStatus, additional
     return { success: true };
 
   } catch (error) {
-    console.error('❌ Erreur mise à jour:', error);
+    console.error('❌ Erreur mise à jour soumission:', error);
     return {
       success: false,
       error: error.message

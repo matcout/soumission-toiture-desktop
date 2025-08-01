@@ -334,33 +334,7 @@ const SubmissionContextMenu = ({ submission, position, onClose, onDelete, onMove
     return rootFolders
   }, [folders])
 
-const filteredSubmissions = useMemo(() => {
-  if (!selectedFolder) return []
-  
-  const folder = folders[selectedFolder]
-  if (!folder) return []
-  
-  // Utiliser la fonction de filtrage si elle existe
-  if (folder.filterFunction) {
-    return folder.filterFunction(submissions)
-  }
-  
-  // Sinon, filtrer manuellement selon le label du dossier
-  if (folder.label === 'À compléter' || folder.id.includes('pending')) {
-    return submissions.filter(s => s.status === 'captured')
-  } else if (folder.label === 'Aller prendre mesure' || folder.id.includes('assignments')) {
-    return submissions.filter(s => s.status === 'assignment')
-  } else if (folder.label === 'Soumissions' || folder.id.includes('completed')) {
-    return submissions.filter(s => s.status === 'completed')
-  }
-  
-  // Pour les dossiers personnalisés, utiliser submissionIds
-  if (folder.submissionIds && folder.submissionIds.length > 0) {
-    return submissions.filter(s => folder.submissionIds.includes(s.id))
-  }
-  
-  return submissions
-}, [selectedFolder, folders, submissions])
+
 
   // Effet pour appliquer les mises à jour en attente AVEC préservation scroll
   useEffect(() => {
@@ -374,6 +348,50 @@ const filteredSubmissions = useMemo(() => {
       })
     }
   }, [isUpdatingFolders, pendingFolderUpdate, preserveScrollPosition, restoreScrollPosition])
+
+const currentSubmissions = useMemo(() => {
+  console.log('🔍 useMemo currentSubmissions calculé', {
+    selectedFolder,
+    folderExists: !!folders[selectedFolder],
+    submissionsCount: submissions.length
+  });
+  
+  if (!selectedFolder || !folders[selectedFolder]) return []
+  const folder = folders[selectedFolder]
+  if (!Array.isArray(submissions)) return []
+  
+  // 🔧 LOGIQUE UNIVERSELLE : Tous les sous-dossiers de "Projet XXXX"
+  if (folder.parentId && folders[folder.parentId]) {
+    const parentFolder = folders[folder.parentId];
+    
+    // Si le parent est un dossier "Projet XXXX" (2025, 2024, 2023, etc.)
+    const isProjectFolder = parentFolder.label?.match(/^Projet \d{4}$/i) || 
+                           parentFolder.id?.includes('project');
+    
+    if (isProjectFolder) {
+      // Pour TOUS les sous-dossiers de projets
+      // Filtrer par le folderId exact du sous-dossier
+      const filtered = submissions.filter(s => s.folderId === folder.id);
+      console.log(`🔧 ${folder.label} (sous-dossier de ${parentFolder.label}): ${filtered.length} soumissions`);
+      return filtered;
+    }
+  }
+  
+  // 🔧 CAS STANDARD : Dossiers système et personnalisés
+  if (folder.filter) {
+    // Dossiers système avec filtres (À compléter, Aller prendre mesure)
+    const filtered = folder.filter(submissions)
+    console.log(`🔍 ${folder.label}: ${filtered.length} soumissions filtrées`);
+    return filtered;
+    
+  } else {
+    // Dossiers personnalisés - filtre par folderId direct
+    const filtered = submissions.filter(s => s.folderId === selectedFolder);
+    console.log(`🔍 ${folder.label}: ${filtered.length} soumissions avec folderId: ${selectedFolder}`);
+    return filtered;
+  }
+}, [selectedFolder, folders, submissions])
+
 
   // Initialisation Firebase et dossiers
   useEffect(() => {
@@ -400,43 +418,12 @@ unsubscribeFolders = subscribeToFolders((result) => {
     result.data.forEach(folder => {
       const desktopIcon = convertIconMobileToDesktop(folder.icon)
       
-// 🎯 CRÉER LE FILTRE CORRECT SELON LE DOSSIER
-let filterFunction;
-
-if (folder.label === 'À compléter' || folder.slug === 'pending' || folder.id.includes('pending')) {
-  filterFunction = (submissions) => {
-    const filtered = submissions.filter(s => s.status === 'captured');
-    console.log(`🔍 Filtre "À compléter": ${filtered.length}/${submissions.length} soumissions`);
-    return filtered;
-  };
-} else if (folder.label === 'Aller prendre mesure' || folder.slug === 'assignments') {
-  filterFunction = (submissions) => {
-    const filtered = submissions.filter(s => s.status === 'assignment');
-    console.log(`🔍 Filtre "Assignments": ${filtered.length}/${submissions.length} soumissions`);
-    return filtered;
-  };
-} else if (folder.filterConfig) {
-  filterFunction = (submissions) => applyFolderFilter(folder, submissions);
-} else {
-  // 🔧 LOGIQUE UNIVERSELLE pour dossiers "Projet XXXX"
-  const isProjectContainer = folder.label?.match(/^Projet \d{4}$/i) || 
-                           folder.id?.includes('project');
-  
-  if (isProjectContainer) {
-    // Les dossiers "Projet XXXX" sont des conteneurs, ils ne contiennent pas directement de soumissions
-    filterFunction = (submissions) => {
-      console.log(`🔍 Filtre "${folder.label}": 0 soumissions (conteneur projet)`);
-      return [];
-    };
-  } else {
-    // Pour tous les autres dossiers (y compris sous-dossiers)
-    filterFunction = (submissions) => {
-      const filtered = submissions.filter(s => s.folderId === folder.id);
-      console.log(`🔍 Filtre "${folder.label}": ${filtered.length}/${submissions.length} soumissions`);
-      return filtered;
-    };
-  }
-}
+      // 🎯 FILTRE SIMPLIFIÉ - UNIQUEMENT PAR folderId
+      const filterFunction = (submissions) => {
+        const filtered = submissions.filter(s => s.folderId === folder.id);
+        console.log(`🔍 Filtre "${folder.label}": ${filtered.length}/${submissions.length} soumissions`);
+        return filtered;
+      };
       
       foldersMap[folder.id] = {
         ...folder,
@@ -448,7 +435,6 @@ if (folder.label === 'À compléter' || folder.slug === 'pending' || folder.id.i
     if (isUpdatingFolders) {
       setPendingFolderUpdate(foldersMap)
     } else {
-      // Préserver scroll lors de mise à jour normale
       preserveScrollPosition()
       setFolders(foldersMap)
       restoreScrollPosition()
@@ -458,53 +444,19 @@ if (folder.label === 'À compléter' || folder.slug === 'pending' || folder.id.i
   }
 })
           
-       unsubscribeSubmissions = subscribeToSubmissions((result) => {
+ unsubscribeSubmissions = subscribeToSubmissions((result) => {
   if (result.success) {
     setSubmissions(result.data)
     console.log(`✅ ${result.count} soumissions chargées`)
     
-    // 🔧 DEBUG TEMPORAIRE - AJOUTER CES LIGNES
+    // 🎯 DIAGNOSTIC SIMPLIFIÉ - folderId uniquement
     window.debugSubmissions = result.data;
     
-    console.log('🔍 DIAGNOSTIC DÉTAILLÉ');
-    console.log('===================');
-    console.log(`📊 Total: ${result.data.length}`);
-    
-    const statusCount = {};
+    const folderIdCount = {};
     result.data.forEach(s => {
-      statusCount[s.status] = (statusCount[s.status] || 0) + 1;
+      folderIdCount[s.folderId || 'AUCUN'] = (folderIdCount[s.folderId || 'AUCUN'] || 0) + 1;
     });
-    console.log('📈 Par status:', statusCount);
-    
-    const captured = result.data.filter(s => s.status === 'captured');
-    console.log(`🎯 ${captured.length} soumissions "captured"`);
-captured.forEach((s, i) => {
-  console.log(`   ${i+1}. ${s.client?.adresse || s.id} (Status: ${s.status})`);
-});
-
-console.log('🔍 ANALYSE DES folderId :');
-result.data.forEach((s, i) => {
-  console.log(`   ${i+1}. ${s.client?.adresse || s.id} - folderId: "${s.folderId || 'AUCUN'}" - status: ${s.status}`);
-});
-
-console.log('🔍 ANALYSE DES DOSSIERS :');
-Object.values(folders).forEach(f => {
-  console.log(`   📁 ${f.label} (ID: ${f.id}) - Parent: ${f.parentId || 'AUCUN'}`);
-});
-    
-    // Test du filtre "À compléter"
-    const pendingFolder = Object.values(folders).find(f => 
-      f.label === 'À compléter' || f.id.includes('pending')
-    );
-    if (pendingFolder && pendingFolder.filter) {
-      const filtered = pendingFolder.filter(result.data);
-      console.log(`🔍 Filtre "À compléter": ${filtered.length} résultats`);
-    } else {
-      console.log('❌ Dossier "À compléter" non trouvé ou sans filtre');
-    }
-  } else {
-    console.error('❌ Erreur sync:', result.error)
-    showError('Erreur synchronisation', result.error)
+    console.log('📁 Par folderId:', folderIdCount);
   }
 })
         } else {
@@ -547,10 +499,10 @@ useEffect(() => {
   }
   
   // ✅ Sélectionner automatiquement la première soumission si disponible
-  if (filteredSubmissions.length > 0 && selectedFolder && !selectedSubmission) {
-    setSelectedSubmission(filteredSubmissions[0])
+  if (currentSubmissions.length > 0 && selectedFolder && !selectedSubmission) {
+    setSelectedSubmission(currentSubmissions[0])
   }
-}, [filteredSubmissions, selectedFolder])
+}, [currentSubmissions, selectedFolder])
 
 // 🔥 REMPLACEZ COMPLÈTEMENT ce useEffect par celui-ci :
 
@@ -558,15 +510,15 @@ useEffect(() => {
   // Auto-sélection intelligente quand le dossier ou les soumissions changent
   if (selectedFolder && folders[selectedFolder]) {
     
-    if (filteredSubmissions.length > 0) {
+    if (currentSubmissions.length > 0) {
       // Vérifier si la note actuellement sélectionnée appartient au dossier actuel
-      const currentSubmissionInFolder = filteredSubmissions.find(s => s.id === selectedSubmission?.id);
+      const currentSubmissionInFolder = currentSubmissions.find(s => s.id === selectedSubmission?.id);
       
       if (!currentSubmissionInFolder) {
         // La note actuelle n'appartient pas au nouveau dossier, sélectionner la première
-        setSelectedSubmission(filteredSubmissions[0]);
+        setSelectedSubmission(currentSubmissions[0]);
         // 🔥 CORRECTION: NE PAS changer currentView, rester en mode dashboard 3 colonnes
-        console.log('🎯 Auto-sélection première note du dossier:', filteredSubmissions[0].client?.adresse);
+        console.log('🎯 Auto-sélection première note du dossier:', currentSubmissions[0].client?.adresse);
       }
       // Sinon, garder la sélection actuelle si elle appartient au dossier
       
@@ -576,7 +528,7 @@ useEffect(() => {
       console.log('🎯 Aucune note disponible dans ce dossier, désélection');
     }
   }
-}, [selectedFolder, filteredSubmissions, selectedSubmission, folders])
+}, [selectedFolder, currentSubmissions, selectedSubmission, folders])
 
   // Fonction helper pour maintenir le scroll - AMÉLIORÉE
   const withScrollPreservation = async (operation) => {
@@ -687,34 +639,34 @@ const handleUpdateSubmissionNotes = async (submissionId, updateData) => {
 }
 
   // Gérer la création d'assignment
-  const handleSubmitAssignment = async (formData) => {
-    const assignmentData = {
-      client: {
-        nom: formData.nom,
-        adresse: formData.adresse.trim(),
-        telephone: formData.telephone,
-        courriel: formData.courriel
-      },
-      notes: formData.notes || '',
-      status: 'assignment'
-    }
-
-    try {
-      setLoading(true)
-      const result = await createAssignment(assignmentData)
-      
-      if (result.success) {
-        setShowAssignmentModal(false)
-        showSuccess('Assignment créé !', `"${result.displayName}" est maintenant disponible sur mobile`)
-      } else {
-        showError('Erreur création', result.error)
-      }
-    } catch (error) {
-      showError('Erreur', error.message)
-    } finally {
-      setLoading(false)
-    }
+const handleSubmitAssignment = async (formData) => {
+  const assignmentData = {
+    client: {
+      nom: formData.nom,
+      adresse: formData.adresse.trim(),
+      telephone: formData.telephone,
+      courriel: formData.courriel
+    },
+    notes: formData.notes || '',
+    folderId: 'assignments' // ✅ UTILISER folderId uniquement
   }
+
+  try {
+    setLoading(true)
+    const result = await createAssignment(assignmentData)
+    
+    if (result.success) {
+      setShowAssignmentModal(false)
+      showSuccess('Assignment créé !', `"${formData.adresse}" ajouté aux assignments`)
+    } else {
+      showError('Erreur', result.error)
+    }
+  } catch (error) {
+    showError('Erreur', error.message)
+  } finally {
+    setLoading(false)
+  }
+}
 
 const handleCalculateSubmission = (submission) => {
   // Passer TOUTE la soumission comme prefilledData pour avoir accès à toutes les données
@@ -742,59 +694,38 @@ const handleCalculateSubmission = (submission) => {
   const handleBackFromCalculator = () => {
     if (selectedSubmission) {
       // Si on vient d'une soumission spécifique, on retourne au dossier approprié
-      const submissionFolder = selectedSubmission.status === 'assignment' ? 'system_assignments' : 
-                              selectedSubmission.status === 'captured' ? 'system_pending' : 
-                              'projet_2025_soumissions'
+      const submissionFolder = selectedSubmission.folderId === 'assignments' ? 'assignments' : 
+                        selectedSubmission.folderId === 'pending' ? 'pending' : 
+                        selectedSubmission.folderId || 'pending'
       setSelectedFolder(submissionFolder)
     }
     setActiveView('dashboard')
     setSelectedSubmission(null)
   }
 
-  const handleSaveCalculation = async (calculationData) => {
-    if (selectedSubmission) {
-      try {
-        // Trouver le sous-dossier "Soumissions" de "Projet 2025"
-        let targetFolderId = null;
-        const projet2025 = Object.values(folders).find(f => 
-          f.id === 'system_project2025' || f.label === 'Projet 2025'
-        );
-        
-        if (projet2025) {
-          // Chercher le sous-dossier "Soumissions"
-          const soumissionsFolder = Object.values(folders).find(f => 
-            f.parentId === projet2025.id && f.label === 'Soumissions'
-          );
-          
-          if (soumissionsFolder) {
-            targetFolderId = soumissionsFolder.id;
-          }
-        }
-        
-        const result = await updateSubmissionStatus(
-          selectedSubmission.id, 
-          'completed', 
-          { 
-            calculs: calculationData.results,
-            folderId: targetFolderId || 'projet_2025_soumissions',
-            // Retirer l'ancien folderId pour éviter les doublons
-            previousFolderId: selectedSubmission.folderId
-          }
-        )
-        
-        if (result.success) {
-          showSuccess('Calcul terminé !', 'Déplacé vers Projet 2025 > Soumissions')
-          setActiveView('dashboard')
-          setSelectedFolder(targetFolderId || 'projet_2025_soumissions')
-          setSelectedSubmission(null)
-        } else {
-          showError('Erreur sauvegarde', result.error)
-        }
-      } catch (error) {
-        showError('Erreur', error.message)
+const handleSaveCalculation = async (submissionId, calculationData) => {
+  await withScrollPreservation(async () => {
+    try {
+      console.log('💾 Sauvegarde calcul:', submissionId)
+      
+      const updateData = {
+        ...calculationData,
+        folderId: calculationData.folderId || 'projet_2025_soumissions' // ✅ folderId uniquement
       }
+      
+      const result = await updateSubmissionInFirebase(submissionId, updateData)
+      
+      if (result.success) {
+        showSuccess('Soumission sauvegardée', 'Calcul et déplacement effectués')
+      } else {
+        throw new Error(result.error)
+      }
+    } catch (error) {
+      showError('Erreur sauvegarde', error.message)
+      throw error
     }
-  }
+  })
+}
 
   const confirmDeleteSubmission = async () => {
     const { id } = deleteModal.submission
@@ -813,23 +744,39 @@ const handleCalculateSubmission = (submission) => {
     setDeleteModal({ show: false, submission: null })
   }
 
-  const handleMoveSubmission = async (submissionId, newFolderId) => {
+const handleMoveSubmission = async (submissionId, targetFolderId, submissionAddress) => {
+  await withScrollPreservation(async () => {
     try {
-      const result = await updateSubmissionStatus(submissionId, null, { 
-        folderId: newFolderId 
+      console.log('📁 Déplacement soumission:', submissionId, '→', targetFolderId)
+      
+      // ✅ SIMPLE : Juste changer le folderId
+      const result = await updateSubmissionInFirebase(submissionId, {
+        folderId: targetFolderId
       })
       
       if (result.success) {
-        showSuccess('Déplacement réussi', 'La soumission a été déplacée')
-        setMoveModal({ show: false, submission: null })
+        const targetFolder = Object.values(folders).find(f => f.id === targetFolderId)
+        showSuccess(
+          'Soumission déplacée', 
+          `"${submissionAddress}" → "${targetFolder?.label || targetFolderId}"`
+        )
       } else {
-        showError('Erreur déplacement', result.error)
+        throw new Error(result.error)
       }
     } catch (error) {
-      showError('Erreur', error.message)
+      showError('Erreur déplacement', error.message)
+      throw error
     }
-  }
+  })
+}
 
+
+const getSubmissionLabel = (submission) => {
+  if (submission.folderId === 'assignments') return 'Assignment';
+  if (submission.folderId === 'pending') return 'En attente';
+  if (submission.folderId?.includes('projet')) return 'Complété';
+  return 'Non classé';
+};
   // Carte de soumission
   const SubmissionCard = ({ submission }) => {
     const [showActions, setShowActions] = useState(false)
@@ -1381,48 +1328,7 @@ if (isProjectFolder) {
       )
     }
     
-const currentSubmissions = useMemo(() => {
-  console.log('🔍 useMemo currentSubmissions calculé', {
-    selectedFolder,
-    folderExists: !!folders[selectedFolder],
-    submissionsCount: submissions.length
-  });
-  
-  if (!selectedFolder || !folders[selectedFolder]) return []
-  const folder = folders[selectedFolder]
-  if (!Array.isArray(submissions)) return []
-  
-  // 🔧 LOGIQUE UNIVERSELLE : Tous les sous-dossiers de "Projet XXXX"
-  if (folder.parentId && folders[folder.parentId]) {
-    const parentFolder = folders[folder.parentId];
-    
-    // Si le parent est un dossier "Projet XXXX" (2025, 2024, 2023, etc.)
-    const isProjectFolder = parentFolder.label?.match(/^Projet \d{4}$/i) || 
-                           parentFolder.id?.includes('project');
-    
-    if (isProjectFolder) {
-      // Pour TOUS les sous-dossiers de projets
-      // Filtrer par le folderId exact du sous-dossier
-      const filtered = submissions.filter(s => s.folderId === folder.id);
-      console.log(`🔧 ${folder.label} (sous-dossier de ${parentFolder.label}): ${filtered.length} soumissions`);
-      return filtered;
-    }
-  }
-  
-  // 🔧 CAS STANDARD : Dossiers système et personnalisés
-  if (folder.filter) {
-    // Dossiers système avec filtres (À compléter, Aller prendre mesure)
-    const filtered = folder.filter(submissions)
-    console.log(`🔍 ${folder.label}: ${filtered.length} soumissions filtrées`);
-    return filtered;
-    
-  } else {
-    // Dossiers personnalisés - filtre par folderId direct
-    const filtered = submissions.filter(s => s.folderId === selectedFolder);
-    console.log(`🔍 ${folder.label}: ${filtered.length} soumissions avec folderId: ${selectedFolder}`);
-    return filtered;
-  }
-}, [selectedFolder, folders, submissions])
+
 console.log('🎯 MainContent rendu:', {
   selectedFolder,
   currentSubmissions: currentSubmissions.length,
@@ -1815,14 +1721,14 @@ return (
                     {selectedFolder && folders[selectedFolder] ? folders[selectedFolder].label : 'Soumissions'}
                   </h2>
                   <span className="text-sm text-gray-500">
-                    {filteredSubmissions.length} élément{filteredSubmissions.length > 1 ? 's' : ''}
+                    {currentSubmissions.length} élément{currentSubmissions.length > 1 ? 's' : ''}
                   </span>
                 </div>
               </div>
 
               {/* Liste des soumissions */}
              <div className="space-y-4 p-4">
-  {filteredSubmissions.map(submission => {
+  {currentSubmissions.map(submission => {
     // ✅ NOUVELLE fonction pour corriger la date
     const formatDate = (createdAt) => {
       if (!createdAt) return 'N/A';
